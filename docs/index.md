@@ -2,6 +2,8 @@
 
 **T**rans**i**t ti**m**ing **e**stimator in Ja**x** — a Python package for robust, efficient, and flexible Bayesian analysis of individual exoplanet transit events.
 
+`timex` is a JAX/numpyro/jaxoplanet port of [`timer`](https://github.com/john-livingston/timer), which uses PyMC/exoplanet.
+
 The primary goal of `timex` is to precisely measure transit mid-times from one or more light curves of the same event, with full posterior uncertainties via MCMC. It is designed for the common workflow of fitting a single transit epoch covered by one or more simultaneous datasets (e.g., multi-band photometry from MuSCAT), while incorporating prior knowledge of the system parameters.
 
 Because all key transit parameters can be assigned either Gaussian or uniform priors, `timex` is also useful for broader transit analyses beyond timing — for example, measuring chromatic radius ratios across multiple photometric bands to validate planet candidates or detect atmospheric features (e.g., Na absorption with narrowband spectrophotometry), or characterizing spot-crossing and flare events that overlap with transits.

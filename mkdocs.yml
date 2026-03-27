@@ -1,0 +1,46 @@
+site_name: timex
+site_description: A Python package for transit fitting analysis
+site_url: https://john-livingston.github.io/timex
+repo_url: https://github.com/john-livingston/timex
+repo_name: john-livingston/timex
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - navigation.sections
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - toc:
+      permalink: true
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Configuration:
+    - System parameters (sys.yaml): configuration/sys.md
+    - Fit parameters (fit.yaml): configuration/fit.md
+  - Usage: usage.md
+  - Examples: examples.md

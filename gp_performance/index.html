@@ -10,13 +10,9 @@
       
       
       
-        <link rel="canonical" href="https://john-livingston.github.io/timex/installation/">
+        <link rel="canonical" href="https://john-livingston.github.io/timex/gp_performance/">
       
       
-        <link rel="prev" href="..">
-      
-      
-        <link rel="next" href="../configuration/sys/">
       
       
         
@@ -27,7 +23,7 @@
     
     
       
-        <title>Installation - timex</title>
+        <title>GP Performance: tinygp vs celerite2 in JAX - timex</title>
       
     
     
@@ -80,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#installation" class="md-skip">
+        <a href="#gp-performance-tinygp-vs-celerite2-in-jax" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Installation
+              GP Performance: tinygp vs celerite2 in JAX
             
           </span>
         </div>
@@ -286,37 +282,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Installation
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
         
   
   
@@ -332,87 +301,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#requirements" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Requirements
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Install">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#celerite2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        celerite2
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#limbdark" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        limbdark
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#dependencies" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dependencies
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -613,10 +501,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#requirements" class="md-nav__link">
+  <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Requirements
+        Summary
       
     </span>
   </a>
@@ -624,22 +512,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#benchmark-results-apple-m-series-cpu-jax-092" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install
+        Benchmark Results (Apple M-series CPU, JAX 0.9.2)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Install">
+    <nav class="md-nav" aria-label="Benchmark Results (Apple M-series CPU, JAX 0.9.2)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#celerite2" class="md-nav__link">
+  <a href="#log-likelihood-evaluation-value-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        celerite2
+        Log-likelihood evaluation (value only)
       
     </span>
   </a>
@@ -647,10 +535,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#limbdark" class="md-nav__link">
+  <a href="#gradient-computation-value-grad-via-jaxvalue_and_grad" class="md-nav__link">
     <span class="md-ellipsis">
       
-        limbdark
+        Gradient computation (value + grad via jax.value_and_grad)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#end-to-end-timex-numpyro-vs-timer-pymc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        End-to-end: timex (numpyro) vs timer (PyMC)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jit-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JIT compilation
       
     </span>
   </a>
@@ -663,10 +573,115 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dependencies" class="md-nav__link">
+  <a href="#why-tinygp-is-slower" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Dependencies
+        Why tinygp is Slower
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#celerite2s-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        celerite2's Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="celerite2&#39;s Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#forward-pass-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Forward pass (C)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reverse-pass-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse pass (C)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kernel-parameterization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel parameterization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jax-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JAX layer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-drop-in-replacement-for-tinygp-in-numpyro" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API (drop-in replacement for tinygp in numpyro)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files
       
     </span>
   </a>
@@ -693,36 +708,226 @@
   
 
 
-<h1 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h1>
-<h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h2>
+<h1 id="gp-performance-tinygp-vs-celerite2-in-jax">GP Performance: tinygp vs celerite2 in JAX<a class="headerlink" href="#gp-performance-tinygp-vs-celerite2-in-jax" title="Permanent link">&para;</a></h1>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>tinygp's quasisep solver is algorithmically O(N) but has higher constant factors than celerite2's C backend. The gradient difference is dramatic: <strong>9-18x slower</strong> for tinygp. celerite2.jax (with C XLA ops) works with JAX 0.9.2 after a one-line fix (<code>lax.zeros_like_array</code> → <code>jnp.zeros_like</code> in <code>ops.py</code>). The latest celerite2 PyPI release (0.3.2) is outdated; install from git HEAD for JAX 0.8+ support.</p>
+<h2 id="benchmark-results-apple-m-series-cpu-jax-092">Benchmark Results (Apple M-series CPU, JAX 0.9.2)<a class="headerlink" href="#benchmark-results-apple-m-series-cpu-jax-092" title="Permanent link">&para;</a></h2>
+<h3 id="log-likelihood-evaluation-value-only">Log-likelihood evaluation (value only)<a class="headerlink" href="#log-likelihood-evaluation-value-only" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>N</th>
+<th>celerite2 numpy (C)</th>
+<th>celerite2.jax (C+XLA)</th>
+<th>tinygp (pure JAX)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>100</td>
+<td>0.006 ms</td>
+<td>0.008 ms</td>
+<td>0.067 ms</td>
+</tr>
+<tr>
+<td>500</td>
+<td>0.009 ms</td>
+<td>0.031 ms</td>
+<td>0.083 ms</td>
+</tr>
+<tr>
+<td>1000</td>
+<td>0.012 ms</td>
+<td>0.044 ms</td>
+<td>0.098 ms</td>
+</tr>
+<tr>
+<td>5000</td>
+<td>0.038 ms</td>
+<td>0.147 ms</td>
+<td>0.232 ms</td>
+</tr>
+</tbody>
+</table>
+<h3 id="gradient-computation-value-grad-via-jaxvalue_and_grad">Gradient computation (value + grad via jax.value_and_grad)<a class="headerlink" href="#gradient-computation-value-grad-via-jaxvalue_and_grad" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>N</th>
+<th>celerite2.jax</th>
+<th>tinygp</th>
+<th>Speedup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>100</td>
+<td>0.027 ms</td>
+<td>0.231 ms</td>
+<td>8.6x</td>
+</tr>
+<tr>
+<td>500</td>
+<td>0.052 ms</td>
+<td>0.655 ms</td>
+<td>12.7x</td>
+</tr>
+<tr>
+<td>1000</td>
+<td>0.084 ms</td>
+<td>1.222 ms</td>
+<td>14.6x</td>
+</tr>
+<tr>
+<td>5000</td>
+<td>0.321 ms</td>
+<td>5.736 ms</td>
+<td>17.9x</td>
+</tr>
+</tbody>
+</table>
+<p>Gradients are the critical metric — NUTS evaluates value+grad every leapfrog step. celerite2.jax is <strong>9-18x faster</strong> than tinygp, with the advantage growing at larger N.</p>
+<h3 id="end-to-end-timex-numpyro-vs-timer-pymc">End-to-end: timex (numpyro) vs timer (PyMC)<a class="headerlink" href="#end-to-end-timex-numpyro-vs-timer-pymc" title="Permanent link">&para;</a></h3>
+<p>Both using celerite2 Matern-3/2, same dataset (hip67522c-gp, N~140 per band × 4 bands), 2000 tune + 2000 draws × 2 chains:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>timer (PyMC)</th>
+<th>timex (numpyro)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Wall time</td>
+<td>125 s</td>
+<td>320 s</td>
+</tr>
+<tr>
+<td>t0 ESS</td>
+<td>453</td>
+<td>2754</td>
+</tr>
+<tr>
+<td>ror ESS</td>
+<td>3456</td>
+<td>4253</td>
+</tr>
+<tr>
+<td>gp_log_scale ESS</td>
+<td>352</td>
+<td>732</td>
+</tr>
+</tbody>
+</table>
+<p>ESS per second (higher = better):</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>timer ESS/s</th>
+<th>timex ESS/s</th>
+<th>Winner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>t0</td>
+<td>3.6</td>
+<td>8.6</td>
+<td>timex 2.4x</td>
+</tr>
+<tr>
+<td>b</td>
+<td>20.7</td>
+<td>9.0</td>
+<td>timer 2.3x</td>
+</tr>
+<tr>
+<td>ror</td>
+<td>27.6</td>
+<td>13.3</td>
+<td>timer 2.1x</td>
+</tr>
+<tr>
+<td>gp_log_scale</td>
+<td>2.8</td>
+<td>2.3</td>
+<td>timer 1.2x</td>
+</tr>
+</tbody>
+</table>
+<p>Timer is faster per step but numpyro's NUTS explores the t0 posterior more efficiently. For transit timing (where t0 ESS matters most), timex produces better samples despite slower wall time.</p>
+<h3 id="jit-compilation">JIT compilation<a class="headerlink" href="#jit-compilation" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Python &gt;= 3.8 (3.13 recommended)</li>
+<li>tinygp log_likelihood: 0.1-0.2s per unique N (one-time)</li>
+<li>tinygp value+grad: 0.2-0.4s per unique N (one-time)</li>
+<li>Not a bottleneck for long MCMC runs</li>
 </ul>
-<h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/john-livingston/timex.git
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>timex
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>conda<span class="w"> </span>create<span class="w"> </span>-n<span class="w"> </span>timex<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.13
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>conda<span class="w"> </span>activate<span class="w"> </span>timex
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>conda<span class="w"> </span>install<span class="w"> </span>eigen
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
-</code></pre></div>
-<h3 id="celerite2">celerite2<a class="headerlink" href="#celerite2" title="Permanent link">&para;</a></h3>
-<p>The GP support requires <code>celerite2</code> built from source (the PyPI release is outdated). The <code>eigen</code> headers (installed above) are needed for compilation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/john-livingston/celerite2
-</code></pre></div>
-<h3 id="limbdark">limbdark<a class="headerlink" href="#limbdark" title="Permanent link">&para;</a></h3>
-<p>The <code>limbdark</code> package must be installed manually:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/john-livingston/limbdark
-</code></pre></div>
-<h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
-<p>Installed automatically via pip:</p>
+<h2 id="why-tinygp-is-slower">Why tinygp is Slower<a class="headerlink" href="#why-tinygp-is-slower" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Pure JAX vs C</strong>: tinygp is implemented entirely in JAX/Python (via equinox). celerite2 uses compiled C++ (Eigen) via pybind11. The O(N) algorithm is the same (semiseparable/quasisep matrix factorization) but C has much lower per-operation overhead.</p>
+</li>
+<li>
+<p><strong>Pytree overhead</strong>: tinygp uses equinox dataclasses (JAX pytrees) for kernel objects. Each GP evaluation traverses the pytree structure, which adds overhead compared to celerite2's flat C arrays.</p>
+</li>
+<li>
+<p><strong>Gradient method</strong>: tinygp relies on JAX's automatic differentiation (reverse-mode AD through the entire forward pass). celerite2 has hand-written C reverse-mode kernels (<code>factor_rev</code>, <code>solve_lower_rev</code>, etc.) that are much more efficient.</p>
+</li>
+<li>
+<p><strong>Not a scaling issue</strong>: Both are O(N). The constant factor is the problem. At TESS scale (N=20k-100k), tinygp would be 4-10x slower than celerite2 per eval, and ~50-100x slower including gradients.</p>
+</li>
+</ol>
+<h2 id="celerite2s-architecture">celerite2's Architecture<a class="headerlink" href="#celerite2s-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="forward-pass-c">Forward pass (C)<a class="headerlink" href="#forward-pass-c" title="Permanent link">&para;</a></h3>
 <ul>
-<li>jax, jaxlib, numpyro</li>
-<li>jaxoplanet, celerite2</li>
-<li>astropy</li>
-<li>numpy, pandas, matplotlib</li>
-<li>arviz, corner</li>
-<li>pyyaml, patsy</li>
+<li><code>driver.factor(t, c, a, U, V)</code> → <code>(d, W, S)</code> — Cholesky factorization, O(N)</li>
+<li><code>driver.solve_lower(t, c, U, W, Y)</code> → solution, O(N)</li>
+<li><code>driver.norm(t, c, a, U, V, Y)</code> → log determinant, O(N)</li>
+</ul>
+<h3 id="reverse-pass-c">Reverse pass (C)<a class="headerlink" href="#reverse-pass-c" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>backprop.factor_rev(t, c, a, U, V, d, W, S, bd, bW)</code> → <code>(bt, bc, ba, bU, bV)</code></li>
+<li><code>backprop.solve_lower_rev(...)</code> → gradients w.r.t. inputs</li>
+<li><code>backprop.solve_upper_rev(...)</code>, <code>backprop.matmul_*_rev(...)</code></li>
+</ul>
+<p>All reverse functions are in C++ (pybind11), stored in <code>celerite2/backprop.cpython-*.so</code>.</p>
+<h3 id="kernel-parameterization">Kernel parameterization<a class="headerlink" href="#kernel-parameterization" title="Permanent link">&para;</a></h3>
+<p><code>Matern32Term(sigma, rho)</code> maps to celerite coefficients <code>(c, a, U, V)</code> via:
+- <code>w0 = sqrt(3) / rho</code>
+- <code>S0 = sigma^2 / w0</code>
+- Specific <code>a, U, V</code> matrices derived from SHO representation with <code>eps</code> parameter</p>
+<h3 id="jax-layer">JAX layer<a class="headerlink" href="#jax-layer" title="Permanent link">&para;</a></h3>
+<p>The PyPI release (0.3.2) was broken with JAX 0.6+ (<code>xla_client.ops</code> removed). Fixed in git HEAD:
+- <code>b3ea056</code> — fix <code>xla_client.ops</code> removal (JAX 0.8+)
+- <code>22c907a</code> — fix <code>lax.zeros_like_array</code> removal (JAX 0.9+), <a href="https://github.com/dfm/celerite2/pull/166">PR #166</a></p>
+<h3 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>conda<span class="w"> </span>install<span class="w"> </span>eigen<span class="w">  </span><span class="c1"># needed for C++ compilation</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/john-livingston/celerite2
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># or upstream once PR is merged:</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># pip install git+https://github.com/dfm/celerite2</span>
+</code></pre></div>
+<h3 id="api-drop-in-replacement-for-tinygp-in-numpyro">API (drop-in replacement for tinygp in numpyro)<a class="headerlink" href="#api-drop-in-replacement-for-tinygp-in-numpyro" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">celerite2.jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">GaussianProcess</span><span class="p">,</span> <span class="n">terms</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">kernel</span> <span class="o">=</span> <span class="n">terms</span><span class="o">.</span><span class="n">Matern32Term</span><span class="p">(</span><span class="n">sigma</span><span class="o">=</span><span class="n">amp</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="n">scale</span><span class="p">)</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">gp</span> <span class="o">=</span> <span class="n">GaussianProcess</span><span class="p">(</span><span class="n">kernel</span><span class="p">)</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">gp</span><span class="o">.</span><span class="n">compute</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">diag</span><span class="o">=</span><span class="n">diag</span><span class="p">)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># In numpyro model:</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">numpyro</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="s2">&quot;obs&quot;</span><span class="p">,</span> <span class="n">gp</span><span class="o">.</span><span class="n">numpyro_dist</span><span class="p">(),</span> <span class="n">obs</span><span class="o">=</span><span class="n">residuals</span><span class="p">)</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="c1"># For predictions (outside model):</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">gp</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">residuals</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="recommendation">Recommendation<a class="headerlink" href="#recommendation" title="Permanent link">&para;</a></h2>
+<p>Switch timex from tinygp to celerite2.jax for <strong>9-18x faster gradients</strong>. The API is nearly identical. For TESS-scale data (N&gt;10k) this is essential.</p>
+<h2 id="files">Files<a class="headerlink" href="#files" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Benchmark script: <code>timex/scripts/bench_3way.py</code></li>
+<li>celerite2 local repo: <code>~/github/celerite2</code> (with JAX 0.9 fix)</li>
+<li>celerite2.jax usage in timex: <code>timex/timex/model.py</code></li>
 </ul>
 
 

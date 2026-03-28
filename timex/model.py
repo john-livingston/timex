@@ -7,8 +7,7 @@ from numpyro.infer import MCMC, NUTS, init_to_value
 from jaxoplanet.orbits import TransitOrbit
 from jaxoplanet.light_curves import limb_dark_light_curve
 from jaxoplanet.light_curves.transforms import integrate
-import tinygp
-from tinygp import kernels as gp_kernels
+from celerite2.jax import GaussianProcess as CeleriteGP, terms as celerite_terms
 import logging
 from . import optim
 
@@ -310,7 +309,7 @@ def build(
                                           priors=priors, shape=1, verbose=False)
                 gp_amp = 10**gp_log_amp
                 gp_scale = 10**gp_log_scale
-                gp_kernel = gp_amp**2 * gp_kernels.quasisep.Matern32(scale=gp_scale)
+                gp_kernel = celerite_terms.Matern32Term(sigma=gp_amp, rho=gp_scale)
 
             if include_flare:
                 if chromatic_flare:
@@ -393,7 +392,8 @@ def build(
                 x_gp = jnp.array(x[mask])
                 yerr_gp = jnp.array(yerr[mask])
                 diag = yerr_gp**2 + jnp.exp(2*log_sigma_lc) * jnp.ones_like(yerr_gp)
-                gp_obj = tinygp.GaussianProcess(gp_kernel, x_gp, diag=diag)
+                gp_obj = CeleriteGP(gp_kernel)
+                gp_obj.compute(x_gp, diag=diag)
                 obs_resid = jnp.array(y[mask]) - light_curve
                 numpyro.sample(
                     f"{name}_y_observed",
@@ -453,7 +453,7 @@ def _add_gp_predictions(map_soln, datasets, masks, gp_config):
 
         amp = float(10**np.squeeze(log_amp))
         scale = float(10**np.squeeze(log_scale))
-        kernel = amp**2 * gp_kernels.quasisep.Matern32(scale=scale)
+        kernel = celerite_terms.Matern32Term(sigma=amp, rho=scale)
 
         # Residuals = data - deterministic model
         # Squeeze all values to remove trailing singleton dims from numpyro trace
@@ -474,12 +474,11 @@ def _add_gp_predictions(map_soln, datasets, masks, gp_config):
         log_sigma_lc = float(np.squeeze(map_soln[f'{name}_log_sigma_lc']))
         diag = np.exp(2*log_sigma_lc) + yerr[mask]**2
 
-        # Use direct solver for conditioning (quasisep condition has shape issues)
-        kernel_direct = amp**2 * gp_kernels.Matern32(scale)
-        x_jnp = jnp.array(x[mask])
-        gp = tinygp.GaussianProcess(kernel_direct, x_jnp, diag=jnp.array(diag))
-        _, cond = gp.condition(jnp.array(residuals), x_jnp,
-                               diag=jnp.zeros(len(x_jnp)))
-        map_soln[f'{name}_gp_pred'] = np.asarray(cond.loc)
+        # Use celerite2 numpy for prediction (outside JAX model context)
+        from celerite2 import GaussianProcess as C2NumpyGP, terms as c2np_terms
+        kernel_np = c2np_terms.Matern32Term(sigma=amp, rho=scale)
+        gp = C2NumpyGP(kernel_np)
+        gp.compute(x[mask], diag=diag)
+        map_soln[f'{name}_gp_pred'] = gp.predict(residuals)
 
     return map_soln

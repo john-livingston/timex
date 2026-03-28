@@ -31,7 +31,7 @@ dependencies = [
     "jaxlib",
     "numpyro",
     "jaxoplanet",
-    "tinygp",
+    "celerite2",
     "astropy",
     "patsy",
     "corner",

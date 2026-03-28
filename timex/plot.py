@@ -502,8 +502,7 @@ def light_curve(data, name, soln, nplanets, mask=None, trace=None, use_gp=False,
     if use_gp:
         if trace is not None and median:
             # Compute GP prediction from median posterior params
-            import tinygp
-            from tinygp import kernels as gp_kernels
+            from celerite2 import GaussianProcess as C2NumpyGP, terms as c2np_terms
             post = trace.posterior
             # Find GP params (shared or per-dataset)
             if f'gp_log_amp_{name}' in post:
@@ -516,14 +515,12 @@ def light_curve(data, name, soln, nplanets, mask=None, trace=None, use_gp=False,
                 log_scale = float(np.median(post['gp_log_scale'].values))
             amp = 10**log_amp
             scale = 10**log_scale
-            kernel = amp**2 * gp_kernels.Matern32(scale)
+            kernel = c2np_terms.Matern32Term(sigma=amp, rho=scale)
             residuals = y[mask] - (tra_mod + sys_mod)
-            import jax.numpy as jnp
             diag = np.exp(2*lcjit) + yerr[mask]**2
-            gp = tinygp.GaussianProcess(kernel, jnp.array(x[mask]), diag=jnp.array(diag))
-            _, cond = gp.condition(jnp.array(residuals), jnp.array(x[mask]),
-                                   diag=jnp.zeros(mask.sum()))
-            gp_mod = np.asarray(cond.loc)
+            gp = C2NumpyGP(kernel)
+            gp.compute(x[mask], diag=diag)
+            gp_mod = gp.predict(residuals)
         else:
             gp_mod = soln[f"{name}_gp_pred"]
         sys_mod += gp_mod

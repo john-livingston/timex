@@ -10,7 +10,7 @@ Documentation: [john-livingston.github.io/timex](https://john-livingston.github.
     cd timex
     conda install eigen
     pip install -e .
-    pip install git+https://github.com/john-livingston/celerite2
+    pip install git+https://github.com/exoplanet-dev/celerite2
     pip install git+https://github.com/john-livingston/limbdark
 
 ## Usage

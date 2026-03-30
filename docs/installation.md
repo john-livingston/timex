@@ -20,7 +20,7 @@ pip install -e .
 The GP support requires `celerite2` built from source (the PyPI release is outdated). The `eigen` headers (installed above) are needed for compilation:
 
 ```bash
-pip install git+https://github.com/john-livingston/celerite2
+pip install git+https://github.com/exoplanet-dev/celerite2
 ```
 
 ### limbdark

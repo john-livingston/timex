@@ -904,9 +904,7 @@
 - <code>22c907a</code> — fix <code>lax.zeros_like_array</code> removal (JAX 0.9+), <a href="https://github.com/dfm/celerite2/pull/166">PR #166</a></p>
 <h3 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>conda<span class="w"> </span>install<span class="w"> </span>eigen<span class="w">  </span><span class="c1"># needed for C++ compilation</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/john-livingston/celerite2
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># or upstream once PR is merged:</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># pip install git+https://github.com/dfm/celerite2</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/exoplanet-dev/celerite2
 </code></pre></div>
 <h3 id="api-drop-in-replacement-for-tinygp-in-numpyro">API (drop-in replacement for tinygp in numpyro)<a class="headerlink" href="#api-drop-in-replacement-for-tinygp-in-numpyro" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">celerite2.jax</span><span class="w"> </span><span class="kn">import</span> <span class="n">GaussianProcess</span><span class="p">,</span> <span class="n">terms</span>

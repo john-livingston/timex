@@ -123,7 +123,8 @@ def build(
     sequential_opt=False,
     use_custom_optimizer=True,
     gp_config=None,
-    n_restarts=1
+    n_restarts=1,
+    optimize=True
 ):
     logging.info("Building model")
 
@@ -420,7 +421,10 @@ def build(
                 jnp.sum(lc_pred, axis=-1)
             )
 
-    # MAP optimization
+    # MAP optimization (skipped when reusing a cached solution)
+    if not optimize:
+        return model_fn, None
+
     logging.info("Running MAP optimization")
     map_soln = optim.optimize(model_fn, verbose=verbose, n_restarts=n_restarts)
     print("MAP optimization complete")

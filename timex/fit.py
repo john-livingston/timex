@@ -352,19 +352,28 @@ class TransitFit:
                 self.priors[f'{key}_prior'] = gp[f'{p}_prior']
 
     def build_model(self, start=None, force=False, verbose=False, plot=True):
-        if force or self.clobber or not hasattr(self, 'map_soln'):
+        # Reuse a cached MAP solution (and only rebuild the model function) unless
+        # forced/clobbering. model_fn itself is cheap and always needed for sampling,
+        # so it must be reconstructed even when map_soln is loaded from map.pkl.
+        reuse_map = not (force or self.clobber) and hasattr(self, 'map_soln')
+        if reuse_map:
+            logging.info('reusing cached MAP solution; rebuilding model function')
+        else:
             logging.info('building and optimizing model')
-            data, priors, masks = self.data, self.priors, self.masks
-            nplanets, use_gp, chromatic = self.nplanets, self.use_gp, self.chromatic
-            fixed, fit_basis = self.fixed, self.fit_basis
-            include_mean, include_flare, chromatic_flare, include_bump, chromatic_bump = self.include_mean, self.include_flare, self.chromatic_flare, self.include_bump, self.chromatic_bump
-            use_custom_optimizer = self.use_custom_optimizer
-            self.model_fn, self.map_soln = model.build(
-                data, priors, nplanets, use_gp=use_gp, fixed=fixed, basis=fit_basis, chromatic=chromatic,
-                masks=masks, start=start, include_mean=include_mean, include_flare=include_flare, chromatic_flare=chromatic_flare, include_bump=include_bump, chromatic_bump=chromatic_bump,
-                verbose=verbose, use_custom_optimizer=use_custom_optimizer, gp_config=self.gp_config,
-                n_restarts=self.n_restarts
-            )
+        data, priors, masks = self.data, self.priors, self.masks
+        nplanets, use_gp, chromatic = self.nplanets, self.use_gp, self.chromatic
+        fixed, fit_basis = self.fixed, self.fit_basis
+        include_mean, include_flare, chromatic_flare, include_bump, chromatic_bump = self.include_mean, self.include_flare, self.chromatic_flare, self.include_bump, self.chromatic_bump
+        use_custom_optimizer = self.use_custom_optimizer
+        model_fn, map_soln = model.build(
+            data, priors, nplanets, use_gp=use_gp, fixed=fixed, basis=fit_basis, chromatic=chromatic,
+            masks=masks, start=start, include_mean=include_mean, include_flare=include_flare, chromatic_flare=chromatic_flare, include_bump=include_bump, chromatic_bump=chromatic_bump,
+            verbose=verbose, use_custom_optimizer=use_custom_optimizer, gp_config=self.gp_config,
+            n_restarts=self.n_restarts, optimize=not reuse_map
+        )
+        self.model_fn = model_fn
+        if not reuse_map:
+            self.map_soln = map_soln
             logging.info("Model built successfully")
             pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
         # for name in self.data.keys():

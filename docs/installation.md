@@ -39,5 +39,5 @@ Installed automatically via pip:
 - jaxoplanet, celerite2
 - astropy
 - numpy, pandas, matplotlib
-- arviz, corner
+- arviz, corner, h5netcdf
 - pyyaml, patsy

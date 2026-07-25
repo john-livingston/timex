@@ -262,3 +262,27 @@ def test_get_map_soln_preserves_vector_variables():
     soln, _ = util.get_map_soln(idata)
 
     assert np.allclose(soln['v'], [4.0, 5.0, 6.0, 7.0])
+
+
+def test_get_map_soln_ignores_nan_logp():
+    import arviz as az
+    import xarray as xr
+
+    posterior = xr.Dataset(
+        {'a': (('chain', 'draw'), np.array([[1.0, 2.0], [3.0, 4.0]]))},
+        coords={'chain': [0, 1], 'draw': [0, 1]},
+    )
+    # nan at chain=0,draw=0 comes before the true max (chain=1,draw=1) in
+    # flattened order, so a plain np.argmax would pick the nan instead
+    sample_stats = xr.Dataset(
+        {'lp': (('chain', 'draw'), np.array([[np.nan, 1.0], [2.0, 5.0]]))},
+        coords={'chain': [0, 1], 'draw': [0, 1]},
+    )
+    idata = az.InferenceData(posterior=posterior, sample_stats=sample_stats)
+
+    soln, max_lp = util.get_map_soln(idata)
+
+    # true max lp (ignoring nan) is at chain=1, draw=1, where a == 4.0
+    assert soln['a'] == 4.0
+    assert np.isfinite(max_lp)
+    assert max_lp == 5.0

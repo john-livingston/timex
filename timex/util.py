@@ -247,6 +247,19 @@ def bin_df(df, timecol='time', errcol='flux_err', binsize=60/86400., kind='media
     df_binned[errcol] = groups[errcol].median() / np.sqrt(groups.size())
     return df_binned.dropna()
 
+# numpyro deterministic sites, the observed site, and the post-hoc GP
+# prediction added by model._add_gp_predictions. None of these are free
+# parameters, so none may be counted when computing BIC/AIC/AICc.
+DERIVED_SUFFIXES = ('_light_curves', '_light_curves_hr', '_lc_pred', '_lm',
+                    '_flare', '_bump', '_y_observed', '_gp_pred')
+
+
+def count_free_params(soln):
+    """Count free parameters in a MAP solution dict, excluding derived quantities."""
+    return sum(np.size(v) for k, v in soln.items()
+               if not k.endswith(DERIVED_SUFFIXES))
+
+
 def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
 
     if method == 'BIC':

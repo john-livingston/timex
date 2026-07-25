@@ -66,3 +66,22 @@ def test_bin_df_mean_flux_and_median_error():
 
     assert np.allclose(binned['flux'].values, expected_flux_mean.values)
     assert np.allclose(binned['fluxerr'].values, expected_err.values)
+
+
+def test_count_free_params_counts_scalars_and_vectors(map_soln):
+    # t0, period, ror, b, dur = 1 each; u_star_g = 2; g_mean = 1; g_log_sigma_lc = 1
+    assert util.count_free_params(map_soln) == 9
+
+
+def test_count_free_params_excludes_derived_quantities(map_soln):
+    # every derived suffix must be ignored no matter how large the array is
+    baseline = util.count_free_params(map_soln)
+    for suffix in util.DERIVED_SUFFIXES:
+        map_soln[f'g{suffix}'] = np.zeros(500)
+    assert util.count_free_params(map_soln) == baseline
+
+
+def test_count_free_params_excludes_gp_predictions(map_soln):
+    baseline = util.count_free_params(map_soln)
+    map_soln['g_gp_pred'] = np.zeros(100)
+    assert util.count_free_params(map_soln) == baseline

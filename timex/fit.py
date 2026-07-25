@@ -406,14 +406,7 @@ class TransitFit:
 
     def _count_params(self):
         """Count free parameters from MAP solution, excluding deterministics and observed."""
-        # Deterministic and observed site names to exclude
-        exclude_suffixes = ('_light_curves', '_light_curves_hr', '_lc_pred', '_lm',
-                           '_flare', '_bump', '_y_observed')
-        count = 0
-        for k, v in self.map_soln.items():
-            if not k.endswith(exclude_suffixes):
-                count += np.size(v)
-        return count
+        return util.count_free_params(self.map_soln)
         
     def plot_systematics(self, name, style=2, fn=None):
 

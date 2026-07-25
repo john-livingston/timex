@@ -64,3 +64,8 @@ include = ["timex*"]
 
 [tool.setuptools.package-data]
 timex = ["*.yaml", "*.yml"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: end to end runs that build a model and sample",
+]

@@ -37,3 +37,32 @@ def test_bin_df_flux_is_bin_median():
     bins = np.arange(df['time'].min(), df['time'].max(), binsize)
     expected = df.groupby(np.digitize(df['time'], bins))['flux'].median()
     assert np.allclose(binned['flux'].values, expected.dropna().values)
+
+
+def test_bin_df_mean_flux_and_median_error():
+    n = 60
+    binsize = 60 / 86400.
+    t = np.linspace(0, 3 * binsize, n, endpoint=False)
+    # skewed pattern: four low values and one high outlier per group of 5,
+    # so the per-bin mean and median are provably different
+    flux = np.tile([1.0, 1.0, 1.0, 1.0, 20.0], n // 5)
+    fluxerr = np.tile([0.01, 0.02, 0.03, 0.04, 0.05], n // 5)
+    df = pd.DataFrame({
+        'time': t,
+        'flux': flux,
+        'fluxerr': fluxerr,
+    })
+
+    binned = util.bin_df(df, 'time', 'fluxerr', binsize=binsize, kind='mean')
+
+    bins = np.arange(df['time'].min(), df['time'].max(), binsize)
+    groups = df.groupby(np.digitize(df['time'], bins))
+    expected_flux_mean = groups['flux'].mean().dropna()
+    expected_flux_median = groups['flux'].median().dropna()
+    expected_err = (groups['fluxerr'].median() / np.sqrt(groups.size())).dropna()
+
+    # confirm the fixture actually distinguishes mean from median in each bin
+    assert not np.allclose(expected_flux_mean.values, expected_flux_median.values)
+
+    assert np.allclose(binned['flux'].values, expected_flux_mean.values)
+    assert np.allclose(binned['fluxerr'].values, expected_err.values)

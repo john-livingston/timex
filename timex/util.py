@@ -76,8 +76,8 @@ def get_map_soln(trace):
 def get_var_names(data, bands, fit_basis, use_gp, fixed,
                   chromatic=False, log_sigma=True, weights=False, gp_config=None):
 
-    var_names = ['t0']
-    for par in 'period b dur'.split():
+    var_names = []
+    for par in 't0 period b dur'.split():
         if par not in fixed:
             var_names += [par]
     if 'ror' not in fixed:
@@ -282,6 +282,26 @@ def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
         print('{} = {}'.format(method, ic))
 
     return float(ic)
+
+def format_tc_lines(planets, ref_time, t0_samples=None, t0_fixed=None):
+    """Lines for tc.txt, in the data's native time system.
+
+    Each line is '<planet> <transit time> <uncertainty>'. Pass t0_samples
+    when t0 was sampled, or t0_fixed when t0 was held fixed (uncertainty
+    is then reported as zero).
+    """
+    lines = []
+    if t0_samples is not None:
+        samps = np.atleast_2d(t0_samples)
+        if samps.shape[0] != len(planets):
+            samps = samps.reshape(len(planets), -1)
+        for i, planet in enumerate(planets):
+            lines.append(f'{planet} {samps[i].mean() + ref_time} {samps[i].std()}')
+    else:
+        fixed = np.atleast_1d(t0_fixed)
+        for i, planet in enumerate(planets):
+            lines.append(f'{planet} {fixed[i] + ref_time} 0.0')
+    return lines
 
 def get_corrected(data, name, soln, nplanets, mask=None, subtract_tc=True):
 

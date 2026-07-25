@@ -164,3 +164,40 @@ def test_get_residuals_subtracts_all_components(map_soln):
     # transit -1.0, mean 0.1, lm 0.2, gp 0.4 -> resid = 0 - (-1.0) - 0.7
     resid = util.get_residuals('g', y, map_soln)
     assert np.allclose(resid, 0.3)
+
+
+def test_get_var_names_omits_fixed_t0():
+    var_names = util.get_var_names(
+        data={'g': {}}, bands=['g'], fit_basis='duration',
+        use_gp=False, fixed=['t0'])
+    assert 't0' not in var_names
+
+
+def test_get_var_names_includes_free_t0():
+    var_names = util.get_var_names(
+        data={'g': {}}, bands=['g'], fit_basis='duration',
+        use_gp=False, fixed=[])
+    assert 't0' in var_names
+
+
+def test_format_tc_lines_from_samples_single_planet():
+    samples = np.full(100, 0.25)
+    lines = util.format_tc_lines(['b'], 2460000.0, t0_samples=samples)
+    assert len(lines) == 1
+    planet, tc, unc = lines[0].split()
+    assert planet == 'b'
+    assert float(tc) == 2460000.25
+    assert float(unc) == 0.0
+
+
+def test_format_tc_lines_from_samples_two_planets():
+    samples = np.vstack([np.full(50, 0.1), np.full(50, 0.2)])
+    lines = util.format_tc_lines(['b', 'c'], 2460000.0, t0_samples=samples)
+    assert len(lines) == 2
+    assert float(lines[0].split()[1]) == 2460000.1
+    assert float(lines[1].split()[1]) == 2460000.2
+
+
+def test_format_tc_lines_from_fixed_value():
+    lines = util.format_tc_lines(['b'], 2460000.0, t0_fixed=np.array([0.5]))
+    assert lines == ['b 2460000.5 0.0']

@@ -461,7 +461,11 @@ def _add_gp_predictions(map_soln, datasets, masks, gp_config):
 
         # Residuals = data - deterministic model
         # Squeeze all values to remove trailing singleton dims from numpyro trace
-        light_curve = float(np.squeeze(map_soln[f'{name}_mean']))
+        # the mean is only a model site when include_mean=True
+        if f'{name}_mean' in map_soln:
+            light_curve = float(np.squeeze(map_soln[f'{name}_mean']))
+        else:
+            light_curve = 0.0
         lcs = np.squeeze(map_soln[f'{name}_light_curves'])
         if lcs.ndim > 1:
             light_curve = light_curve + np.sum(lcs, axis=-1)

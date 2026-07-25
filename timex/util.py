@@ -20,13 +20,25 @@ def get_spline_basis(x, degree=3, knots=None, n_knots=5, include_intercept=False
         spline_dm = np.asarray(dmatrix(dm_formula, {"x": x}))
     return spline_dm
 
-def get_residuals(name, y, soln, mask=None, use_gp=False):
+def get_sys_model(name, soln, npoints):
+    """Sum of every non-transit model component present in soln.
+
+    Components are the mean flux, the linear (systematics) model, the flare
+    and bump models, and the GP conditional mean. A component absent from
+    soln contributes zero, so this is safe for any model configuration.
+    """
+    sys_mod = np.zeros(npoints)
+    for key in (f'{name}_mean', f'{name}_lm', f'{name}_flare',
+                f'{name}_bump', f'{name}_gp_pred'):
+        if key in soln:
+            sys_mod = sys_mod + np.asarray(soln[key]).squeeze().flatten()
+    return sys_mod
+
+def get_residuals(name, y, soln, mask=None):
 
     if mask is None:
         mask = np.ones(len(y), dtype=bool)
 
-    mean = soln[f"{name}_mean"]
-    lin_mod = soln[f'{name}_lm'] if f'{name}_lm' in soln.keys() else np.zeros(mask.sum())
     tra_mod = soln[f"{name}_light_curves"]
     # Sum over planets axis if multiple planets
     if tra_mod.ndim > 1:
@@ -36,14 +48,7 @@ def get_residuals(name, y, soln, mask=None, use_gp=False):
     if len(tra_mod) == len(y):
         tra_mod = tra_mod[mask]
 
-    # Add flare and bump components if they exist
-    flare_mod = soln[f"{name}_flare"] if f"{name}_flare" in soln.keys() else 0
-    bump_mod = soln[f"{name}_bump"] if f"{name}_bump" in soln.keys() else 0
-
-    sys_mod = lin_mod + mean + flare_mod + bump_mod
-    if use_gp:
-        gp_mod = soln[f"{name}_gp_pred"]
-        sys_mod += gp_mod
+    sys_mod = get_sys_model(name, soln, int(mask.sum()))
 
     return y[mask] - tra_mod - sys_mod
 
@@ -278,52 +283,34 @@ def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
 
     return float(ic)
 
-def get_corrected(data, name, soln, nplanets, 
-                  mask=None, trace=None, use_gp=False, median=True, subtract_tc=True):
-    
+def get_corrected(data, name, soln, nplanets, mask=None, subtract_tc=True):
+
     if subtract_tc:
         offset = soln['t0']
         if nplanets > 1:
             offset = offset[0]
     else:
         offset = 0
-    
+
     if isinstance(offset, np.ndarray):
         offset = offset.item()
-        
+
     x, y, yerr, x_hr = [data.get(i) for i in 'x y yerr x_hr'.split()]
     if mask is None:
         mask = np.ones(len(x), dtype=bool)
 
-    if trace is None or not median:
-        if f'{name}_mean' in soln.keys():
-            mean = soln[f"{name}_mean"]
-        else:
-            mean = 0
-        lcjit = np.exp(soln[f'{name}_log_sigma_lc'])
-        lin_mod = soln[f'{name}_lm']
-        lcs = soln[f"{name}_light_curves"]
-        lcs_hr = soln[f"{name}_light_curves_hr"]
-        tra_mod = np.sum(lcs, axis=-1) if lcs.ndim > 1 else lcs
-        tra_mod_hr = np.sum(lcs_hr, axis=-1) if lcs_hr.ndim > 1 else lcs_hr
-    else:
-        if f'{name}_mean' in soln.keys():
-            mean = np.median(trace[f"{name}_mean"])
-        else:
-            mean = 0
-        lcjit = np.exp(np.median(trace[f'{name}_log_sigma_lc']))
-        lin_mod = np.median(trace[f'{name}_lm'], axis=0)
-        tra_mod = np.sum(np.median(trace[f"{name}_light_curves"], axis=0), axis=1)
-        tra_mod_hr = np.sum(np.median(trace[f"{name}_light_curves_hr"], axis=0), axis=1)
-    
-    sys_mod = lin_mod.flatten() + mean
-    
+    lcs_hr = soln[f"{name}_light_curves_hr"]
+    tra_mod_hr = np.sum(lcs_hr, axis=-1) if lcs_hr.ndim > 1 else lcs_hr
+
+    # subtract every non-transit component, not just the linear model
+    sys_mod = get_sys_model(name, soln, int(mask.sum()))
+
     cor = dict(
-        x=x[mask]-offset, 
+        x=x[mask]-offset,
         y=y[mask]-sys_mod,
-        yerr=yerr[mask], 
-        x_hr=x_hr-offset, 
+        yerr=yerr[mask],
+        x_hr=x_hr-offset,
         tra_mod_hr=tra_mod_hr
     )
-    
+
     return cor

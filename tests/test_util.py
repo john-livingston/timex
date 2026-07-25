@@ -85,3 +85,82 @@ def test_count_free_params_excludes_gp_predictions(map_soln):
     baseline = util.count_free_params(map_soln)
     map_soln['g_gp_pred'] = np.zeros(100)
     assert util.count_free_params(map_soln) == baseline
+
+
+def _corrected_data(n=100):
+    return dict(
+        x=np.linspace(0.0, 0.1, n),
+        y=np.zeros(n),
+        yerr=np.full(n, 0.5),
+        x_hr=np.linspace(0.0, 0.1, 500),
+    )
+
+
+def test_get_sys_model_sums_present_components(map_soln):
+    map_soln['g_flare'] = np.full(100, 0.5)
+    map_soln['g_gp_pred'] = np.full(100, 0.25)
+    # g_mean 0.1 + g_lm 0.2 + g_flare 0.5 + g_gp_pred 0.25
+    sys_mod = util.get_sys_model('g', map_soln, 100)
+    assert sys_mod.shape == (100,)
+    assert np.allclose(sys_mod, 1.05)
+
+
+def test_get_sys_model_tolerates_missing_components():
+    soln = {'g_mean': np.array(0.3)}
+    assert np.allclose(util.get_sys_model('g', soln, 10), 0.3)
+
+
+def test_get_sys_model_without_linear_model_does_not_raise():
+    soln = {'g_mean': np.array(0.0), 'g_gp_pred': np.full(10, 2.0)}
+    assert np.allclose(util.get_sys_model('g', soln, 10), 2.0)
+
+
+def test_get_corrected_removes_gp_component(map_soln):
+    data = _corrected_data()
+    without_gp = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
+
+    map_soln['g_gp_pred'] = np.full(100, 0.75)
+    with_gp = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
+
+    # the GP trend must be subtracted out, not left in the corrected flux
+    assert np.allclose(without_gp['y'] - with_gp['y'], 0.75)
+
+
+def test_get_corrected_removes_flare_and_bump(map_soln):
+    data = _corrected_data()
+    baseline = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
+
+    map_soln['g_flare'] = np.full(100, 1.5)
+    map_soln['g_bump'] = np.full(100, 0.5)
+    corrected = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
+
+    assert np.allclose(baseline['y'] - corrected['y'], 2.0)
+
+
+def test_get_corrected_without_linear_model(map_soln):
+    del map_soln['g_lm']
+    data = _corrected_data()
+    cor = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
+    # y is zeros, only g_mean = 0.1 is subtracted
+    assert np.allclose(cor['y'], -0.1)
+
+
+def test_get_corrected_respects_mask(map_soln):
+    data = _corrected_data()
+    mask = np.zeros(100, dtype=bool)
+    mask[:40] = True
+    # in real usage soln arrays are only ever computed on x[mask] (see
+    # model.py), so g_lm must already be sized to mask.sum(), not the full
+    # unmasked length
+    map_soln['g_lm'] = np.full(40, 0.2)
+    cor = util.get_corrected(data, 'g', map_soln, 1, mask=mask, subtract_tc=False)
+    assert cor['y'].shape == (40,)
+    assert cor['yerr'].shape == (40,)
+
+
+def test_get_residuals_subtracts_all_components(map_soln):
+    map_soln['g_gp_pred'] = np.full(100, 0.4)
+    y = np.zeros(100)
+    # transit -1.0, mean 0.1, lm 0.2, gp 0.4 -> resid = 0 - (-1.0) - 0.7
+    resid = util.get_residuals('g', y, map_soln)
+    assert np.allclose(resid, 0.3)

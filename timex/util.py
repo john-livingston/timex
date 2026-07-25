@@ -120,8 +120,10 @@ def get_summary(trace, data, bands, fit_basis, use_gp, fixed,
 
 def get_outlier_mask(x, y, name, map_soln, use_gp, nsig=7, include_flare=False, include_bump=False, fp=None):
     lcs = map_soln[f"{name}_light_curves"]
+    # the mean is only a model site when include_mean=True
+    mean = map_soln[f"{name}_mean"] if f"{name}_mean" in map_soln else 0.0
     mod = (
-        + map_soln[f"{name}_mean"]
+        + mean
         + (np.sum(lcs, axis=-1) if lcs.ndim > 1 else lcs)
     )
     if f"{name}_lm" in map_soln.keys():

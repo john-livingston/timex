@@ -264,6 +264,20 @@ def test_get_map_soln_preserves_vector_variables():
     assert np.allclose(soln['v'], [4.0, 5.0, 6.0, 7.0])
 
 
+def test_get_outlier_mask_without_mean_site(map_soln):
+    # include_mean=False means model_fn never creates a {name}_mean site;
+    # get_outlier_mask must tolerate that the same way model.py does
+    del map_soln['g_mean']
+    n = 100
+    x = np.linspace(0.0, 0.1, n)
+    y = np.zeros(n)
+
+    mask = util.get_outlier_mask(x, y, 'g', map_soln, use_gp=False)
+
+    assert mask.shape == (n,)
+    assert mask.dtype == bool
+
+
 def test_get_map_soln_ignores_nan_logp():
     import arviz as az
     import xarray as xr

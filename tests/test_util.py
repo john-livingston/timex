@@ -201,3 +201,64 @@ def test_format_tc_lines_from_samples_two_planets():
 def test_format_tc_lines_from_fixed_value():
     lines = util.format_tc_lines(['b'], 2460000.0, t0_fixed=np.array([0.5]))
     assert lines == ['b 2460000.5 0.0']
+
+
+def test_get_map_soln_selects_max_logp_sample():
+    import arviz as az
+    import xarray as xr
+
+    posterior = xr.Dataset(
+        {'a': (('chain', 'draw'), np.array([[1.0, 2.0], [3.0, 4.0]]))},
+        coords={'chain': [0, 1], 'draw': [0, 1]},
+    )
+    sample_stats = xr.Dataset(
+        {'lp': (('chain', 'draw'), np.array([[0.0, 1.0], [5.0, 2.0]]))},
+        coords={'chain': [0, 1], 'draw': [0, 1]},
+    )
+    idata = az.InferenceData(posterior=posterior, sample_stats=sample_stats)
+
+    soln, max_lp = util.get_map_soln(idata)
+
+    # max lp is at chain=1, draw=0, where a == 3.0
+    assert soln['a'] == 3.0
+    assert max_lp == 5.0
+
+
+def test_get_map_soln_handles_potential_energy():
+    import arviz as az
+    import xarray as xr
+
+    posterior = xr.Dataset(
+        {'a': (('chain', 'draw'), np.array([[1.0, 2.0]]))},
+        coords={'chain': [0], 'draw': [0, 1]},
+    )
+    # potential_energy is -logp, so the smaller value is the better sample
+    sample_stats = xr.Dataset(
+        {'potential_energy': (('chain', 'draw'), np.array([[9.0, 1.0]]))},
+        coords={'chain': [0], 'draw': [0, 1]},
+    )
+    idata = az.InferenceData(posterior=posterior, sample_stats=sample_stats)
+
+    soln, max_lp = util.get_map_soln(idata)
+
+    assert soln['a'] == 2.0
+    assert max_lp == -1.0
+
+
+def test_get_map_soln_preserves_vector_variables():
+    import arviz as az
+    import xarray as xr
+
+    posterior = xr.Dataset(
+        {'v': (('chain', 'draw', 'v_dim'), np.arange(8.0).reshape(1, 2, 4))},
+        coords={'chain': [0], 'draw': [0, 1]},
+    )
+    sample_stats = xr.Dataset(
+        {'lp': (('chain', 'draw'), np.array([[0.0, 7.0]]))},
+        coords={'chain': [0], 'draw': [0, 1]},
+    )
+    idata = az.InferenceData(posterior=posterior, sample_stats=sample_stats)
+
+    soln, _ = util.get_map_soln(idata)
+
+    assert np.allclose(soln['v'], [4.0, 5.0, 6.0, 7.0])

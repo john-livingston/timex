@@ -59,19 +59,20 @@ def get_map_soln(trace):
         lp = trace.sample_stats["lp"]
     else:
         lp = -trace.sample_stats["potential_energy"]
-    max_lp = lp.max()
-    ix = lp == max_lp
-    trace_map = trace.posterior.where(ix, drop=True)
-    flat_samps_map = trace_map.stack(sample=("chain", "draw"))
+    # index the single best sample rather than masking a copy of the whole
+    # posterior, which would materialize every deterministic array
+    lp_values = np.asarray(lp.values)
+    chain, draw = np.unravel_index(np.argmax(lp_values), lp_values.shape)
+    trace_map = trace.posterior.isel(chain=chain, draw=draw)
     soln = {}
-    for k, v in flat_samps_map.data_vars.items():
-        val = v.values
+    for k, v in trace_map.data_vars.items():
+        val = np.asarray(v.values)
         if val.size == 1:
             soln[k] = val.item()
         else:
             # Squeeze trailing singleton dims (numpyro adds shape-1 dims for scalar params)
             soln[k] = np.squeeze(val)
-    return soln, max_lp.values.item()
+    return soln, float(lp_values.max())
 
 def get_var_names(data, bands, fit_basis, use_gp, fixed,
                   chromatic=False, log_sigma=True, weights=False, gp_config=None):

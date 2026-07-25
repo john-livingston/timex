@@ -409,16 +409,11 @@ def build(
                     obs=y[mask]
                 )
 
-            # Phased light curve model
-            if chromatic:
-                lc_pred = _compute_light_curve(
-                    orbit_band, v[f'u_star_{band}'], x[mask], texp) * 1e3
-            else:
-                lc_pred = _compute_light_curve(
-                    orbit, v[f'u_star_{band}'], x[mask], texp) * 1e3
+            # Phased light curve model: identical to the transit model used in
+            # the likelihood above, so reuse it rather than recomputing
             numpyro.deterministic(
                 f"{name}_lc_pred",
-                jnp.sum(lc_pred, axis=-1)
+                jnp.sum(light_curves, axis=-1)
             )
 
     # MAP optimization (skipped when reusing a cached solution)

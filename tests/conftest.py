@@ -1,13 +1,6 @@
-import sys
 import numpy as np
 import pandas as pd
 import pytest
-from unittest import mock
-
-# Mock celerite2.jax to work around JAX v0.6.0 compatibility issue
-sys.modules['celerite2.jax'] = mock.MagicMock()
-sys.modules['celerite2.jax.terms'] = mock.MagicMock()
-sys.modules['celerite2.jax.ops'] = mock.MagicMock()
 
 
 @pytest.fixture

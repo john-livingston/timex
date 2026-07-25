@@ -1,7 +1,7 @@
 import inspect
 import numpy as np
 
-from timex import io
+from timex import fit, io
 
 
 def test_read_generic_plain_file_returns_none_design_matrix(synthetic_lc):
@@ -59,13 +59,11 @@ def test_read_generic_covariates_with_trend_and_bias(synthetic_lc_aux):
 
 
 def test_fit_chunk_thresh_default_matches_io_signature():
-    from timex import fit
     io_default = inspect.signature(io.read_generic).parameters['chunk_thresh'].default
     assert fit.defaults['data']['chunk_thresh'] == io_default
 
 
 def test_chunk_offset_with_fit_default_does_not_split_every_point(synthetic_lc):
-    from timex import fit
     _, _, _, X, _, _, _ = io.read_generic(
         synthetic_lc, binsize=None, chunk_offset=True,
         chunk_thresh=fit.defaults['data']['chunk_thresh'], verbose=False)

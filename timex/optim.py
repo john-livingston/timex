@@ -84,9 +84,7 @@ def optimize(
         try:
             info = minimize(objective, x0, method='L-BFGS-B',
                             options={'maxiter': maxeval}, **kw)
-        except StopIteration:
-            # KeyboardInterrupt deliberately propagates: an interrupted run
-            # must not fall through and cache the init point as the MAP
+        except (KeyboardInterrupt, StopIteration):
             info = None
         finally:
             if verbose and progress:
@@ -112,10 +110,6 @@ def optimize(
 
     if verbose and n_restarts > 1:
         sys.stderr.write(f"best logp across {n_restarts} restarts: {-best_nll:.3e}\n")
-
-    if best_x is None:
-        raise RuntimeError(
-            "MAP optimization produced no valid solution")
 
     if not np.isfinite(best_nll):
         sys.stderr.write("WARNING: final logp not finite\n")

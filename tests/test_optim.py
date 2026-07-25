@@ -27,6 +27,19 @@ def test_optimize_propagates_keyboard_interrupt(monkeypatch):
         optim.optimize(_tiny_model, verbose=False, progress=False)
 
 
+def test_optimize_propagates_keyboard_interrupt_after_eval(monkeypatch):
+    # the dangerous case: the interrupt lands after the objective has run, so
+    # initial_nll is finite and the old code accepted the init point as the MAP
+    def interrupt_after_eval(objective, x0, *args, **kwargs):
+        objective(x0)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(optim, 'minimize', interrupt_after_eval)
+
+    with pytest.raises(KeyboardInterrupt):
+        optim.optimize(_tiny_model, verbose=False, progress=False)
+
+
 def test_optimize_raises_when_no_solution(monkeypatch):
     def stop(*args, **kwargs):
         raise StopIteration

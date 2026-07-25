@@ -526,7 +526,6 @@ class TransitFit:
             y = data['y']
             mask = self.masks[name]
             map_soln = self.map_soln
-            use_gp = self.use_gp
             resid = util.get_residuals(name, y, map_soln, mask=mask)
             logging.info(f"{name} residual scatter: {resid.std()*1e3 :.0f} ppm")
         

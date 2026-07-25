@@ -1,6 +1,8 @@
 import os
 import shutil
 
+import numpy as np
+import pandas as pd
 import pytest
 import yaml
 
@@ -9,11 +11,15 @@ EXAMPLE = os.path.join(REPO_ROOT, 'examples', 'hip67522c')
 
 
 @pytest.mark.slow
-def test_cli_pipeline_runs(tmp_path):
+def test_fit_pipeline_runs(tmp_path):
     from timex import fit
 
     wd = tmp_path / 'hip67522c'
-    shutil.copytree(EXAMPLE, wd)
+    # ignore 'out': examples/hip67522c/out ships with a real trace.nc and
+    # map.pkl from a previous run, and it is ~120MB. clobber=True below
+    # means these files are never read, so copying them would only slow
+    # down every test run for no benefit.
+    shutil.copytree(EXAMPLE, wd, ignore=shutil.ignore_patterns('out'))
 
     with open(wd / 'fit.yaml') as f:
         fit_params = yaml.safe_load(f)
@@ -41,4 +47,33 @@ def test_cli_pipeline_runs(tmp_path):
     outdir = wd / 'out'
     assert (outdir / 'tc.txt').exists()
     assert (outdir / 'ic.txt').exists()
-    assert list(outdir.glob('*-cor.csv'))
+
+    # {name}_lc_pred is a numpyro deterministic that was recently changed to
+    # reuse the already computed transit light curve rather than recompute
+    # it. Nothing in the production code reads its value, so this is the
+    # only thing that would catch a regression that breaks it (wrong shape,
+    # missing entirely, etc). Check every dataset, not just one.
+    for name, data in tf.data.items():
+        mask = tf.masks[name]
+        n_unmasked = len(data['x']) if mask is None else int(np.sum(mask))
+        lc_pred_var = f'{name}_lc_pred'
+        assert lc_pred_var in tf.trace.posterior.data_vars, (
+            f'{lc_pred_var} missing from posterior'
+        )
+        lc_pred = tf.trace.posterior[lc_pred_var]
+        assert lc_pred.shape[-1] == n_unmasked, (
+            f'{lc_pred_var} last axis length {lc_pred.shape[-1]} '
+            f'!= {n_unmasked} unmasked points'
+        )
+
+    # one corrected light curve csv per dataset, not just "at least one"
+    cor_files = sorted(outdir.glob('*-cor.csv'))
+    assert len(cor_files) == len(tf.data), (
+        f'expected {len(tf.data)} *-cor.csv files, found {len(cor_files)}: {cor_files}'
+    )
+
+    # the corrected csvs must have real content, not just exist
+    cor_df = pd.read_csv(cor_files[0])
+    assert len(cor_df) > 0
+    assert list(cor_df.columns) == ['x', 'y', 'yerr']
+    assert not cor_df.isna().any().any()

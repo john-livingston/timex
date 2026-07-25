@@ -1,6 +1,6 @@
 # timex
 
-Transit timing estimator in Jax — a Python package for robust, efficient, and flexible Bayesian analysis of individual exoplanet transit events.
+Transit timing estimator in Jax, a Python package for robust, efficient, and flexible Bayesian analysis of individual exoplanet transit events.
 
 Documentation: [john-livingston.github.io/timex](https://john-livingston.github.io/timex)
 

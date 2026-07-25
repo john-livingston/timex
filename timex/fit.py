@@ -655,13 +655,13 @@ class TransitFit:
         
         # Add all posterior samples
         for var_name, var_data in flat_samps.data_vars.items():
-            values = var_data.values
-            
             # Skip large arrays that are not typically needed for analysis
             # (light curves, linear model predictions, flare/bump models, etc.)
             if var_name.endswith(('_light_curves', '_light_curves_hr', '_lc_pred', '_lm', '_flare', '_bump')):
                 continue
-            
+
+            values = var_data.values
+
             # Handle different array shapes
             if values.ndim == 1:
                 # 1D array: (n_samples,)
@@ -723,8 +723,6 @@ class TransitFit:
             for ic in ics:
                 val = util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=False)
                 f.write(f'{ic} {val:.2f}\n')
-        if self.clobber:
-            pass
         self.save_posterior_samples()
         self.save_corrected()
 

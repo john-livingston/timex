@@ -243,8 +243,8 @@ def bin_df(df, timecol='time', errcol='flux_err', binsize=60/86400., kind='media
         df_binned = groups.median()
     else:
         df_binned = groups.mean()
-    yerr_binned = groups.median()[errcol] / np.sqrt(groups.size())
-    df_binned[errcol] = yerr_binned
+    # bin error is the median point error scaled by sqrt(N) regardless of kind
+    df_binned[errcol] = groups[errcol].median() / np.sqrt(groups.size())
     return df_binned.dropna()
 
 def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):

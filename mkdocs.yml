@@ -44,3 +44,4 @@ nav:
     - Fit parameters (fit.yaml): configuration/fit.md
   - Usage: usage.md
   - Examples: examples.md
+  - GP performance: gp_performance.md

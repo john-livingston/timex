@@ -63,8 +63,9 @@ def corner(trace, soln, priors, use_gp, fixed, nplanets, bands, data,
         param_names = []
         
         # Transit parameters
-        param_names += [f't0_{i+1}' for i in range(nplanets)] if nplanets > 1 else ['t0']
-        
+        if 't0' not in fixed:
+            param_names += [f't0_{i+1}' for i in range(nplanets)] if nplanets > 1 else ['t0']
+
         for par in 'dur period b'.split():
             if par not in fixed:
                 param_names += [f'{par}_{i+1}' for i in range(nplanets)] if nplanets > 1 else [par]

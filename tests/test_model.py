@@ -65,14 +65,16 @@ def test_add_gp_predictions_missing_mean_matches_explicit_zero(map_soln):
 
 
 def test_as_init_arrays_converts_python_scalars():
-    """get_map_soln unwraps scalars to Python floats via .item(); numpyro's
-    init_to_value substitutes them verbatim, and get_rv then calls .squeeze()
-    on the result. Anything handed to init_to_value must therefore be an array.
+    """A map.pkl pickled before get_map_soln was changed to preserve free
+    parameter shapes can still hold plain Python floats for scalar sites.
+    numpyro's init_to_value substitutes them verbatim, and get_rv then calls
+    .squeeze() on the result. Anything handed to init_to_value must therefore
+    be an array.
     """
     from timex import model
 
     out = model._as_init_arrays({
-        't0': 0.05,                       # plain float, as get_map_soln produces
+        't0': 0.05,                       # plain float, as a legacy map.pkl might hold
         'ror': np.array([0.1]),           # already an array
         'u_star_g': np.array([0.4, 0.2]),
     })

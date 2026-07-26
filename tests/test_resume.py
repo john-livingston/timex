@@ -138,6 +138,49 @@ def test_from_dir_loads_mismatched_artifacts_with_a_warning(wd, caplog):
 
 
 @pytest.mark.slow
+def test_from_dir_clip_does_not_launder_stale_mask_under_current_key(wd, caplog):
+    """The write side must respect a force-loaded mismatch too.
+
+    from_dir force-loads a mismatched mask.pkl so a saved run can still be
+    inspected, and clip_outliers then does not recompute it (masks[name] is
+    not None). If clip_outliers went on to record it under the CURRENT model
+    key, a later CLI run would silently adopt an old-config mask with no
+    warning. The safe outcome is that dropping the stale entry first, then
+    skipping the re-record, leaves no entry at all, so the next run recomputes.
+    """
+    from timex import cache, fit
+
+    # produce a mask.pkl recorded under the ORIGINAL (matching) model key
+    fit_params, sys_params = _load_params(wd)
+    tf0 = fit.TransitFit(sys_params, fit_params, wd=str(wd))
+    tf0.clip_outliers()
+    manifest = cache.read_manifest(os.path.join(wd, 'out'))
+    assert 'mask.pkl' in manifest, 'setup: clip_outliers must record mask.pkl before the edit'
+
+    # edit fit.yaml on disk so from_dir, which re-reads it, sees a changed config
+    with open(wd / 'fit.yaml') as f:
+        on_disk = yaml.safe_load(f)
+    on_disk['uniform']['ror'] = [0.03, 0.17]
+    with open(wd / 'fit.yaml', 'w') as f:
+        yaml.safe_dump(on_disk, f)
+
+    with caplog.at_level(logging.INFO):
+        caplog.clear()
+        tf = fit.TransitFit.from_dir(str(wd))
+        tf.clip_outliers()
+
+    assert 'does not match the current config' in caplog.text
+    assert 'loading mask.pkl anyway' in caplog.text
+
+    manifest = cache.read_manifest(os.path.join(wd, 'out'))
+    assert manifest.get('mask.pkl') != tf._cache_keys['model'], (
+        'mask.pkl was recorded under the current key despite being '
+        'force-loaded from a mismatched config'
+    )
+    assert 'mask.pkl' not in manifest, 'the safe outcome is no entry, so the next run recomputes'
+
+
+@pytest.mark.slow
 def test_resumed_run_has_same_posterior_shapes_as_a_fresh_run(wd, caplog):
     """A resumed run must not silently relabel summary.csv.
 

@@ -247,7 +247,9 @@ class TransitFit:
         On mismatch this warns and returns False, so the existing gates in
         build_model/sample/clip_outliers recompute naturally. from_dir sets
         _force_load_saved because loading a finished run for plotting is an
-        explicit request for those specific artifacts; it still warns.
+        explicit request for those specific artifacts; it still warns, and
+        records the mismatch in _stale_force_loaded so the write sites do not
+        launder it into looking validated under the current key.
         """
         if cache.is_valid(manifest, artifact, self._cache_keys[tier]):
             return True
@@ -257,6 +259,7 @@ class TransitFit:
         )
         if self._force_load_saved:
             logging.warning(f'loading {artifact} anyway, as requested by from_dir')
+            self._stale_force_loaded.add(artifact)
             return True
         return False
 
@@ -267,6 +270,10 @@ class TransitFit:
         # these keys when they write, including on the clobber path
         self._cache_keys = cache.compute_keys(
             self.fit_params, self.sys_params, self.wd)
+        # artifact names force-loaded below despite a key mismatch (from_dir
+        # only); always initialized, including on the clobber early return,
+        # so the write sites can check it unconditionally
+        self._stale_force_loaded = set()
         if self.clobber and not self._force_load_saved:
             return
         manifest = cache.read_manifest(self.outdir)
@@ -407,7 +414,8 @@ class TransitFit:
             logging.info("Model built successfully")
             cache.drop_entry(self.outdir, 'map.pkl')
             pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-            cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
+            if 'map.pkl' not in self._stale_force_loaded:
+                cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
         # for name in self.data.keys():
         #     fn = f'fit-{name}.png'
         #     self.plot(name, fn=fn)
@@ -507,7 +515,8 @@ class TransitFit:
                         clipped = True
         cache.drop_entry(self.outdir, 'mask.pkl')
         pickle.dump(self.masks, open(os.path.join(self.outdir, 'mask.pkl'), 'wb'))
-        cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
+        if 'mask.pkl' not in self._stale_force_loaded:
+            cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
         if clipped:
             self.build_model(start=self.map_soln, force=True)
             
@@ -530,7 +539,8 @@ class TransitFit:
             self.trace = az.from_numpyro(mcmc)
             cache.drop_entry(self.outdir, 'trace.nc')
             self.trace.to_netcdf(os.path.join(self.outdir, 'trace.nc'))
-            cache.write_manifest(self.outdir, 'trace.nc', self._cache_keys['run'])
+            if 'trace.nc' not in self._stale_force_loaded:
+                cache.write_manifest(self.outdir, 'trace.nc', self._cache_keys['run'])
 
         self.summary = util.get_summary(
             self.trace, self.data, self.bands, self.fit_basis, self.use_gp, self.fixed,
@@ -548,7 +558,8 @@ class TransitFit:
             self.map_soln = _add_gp_predictions(self.map_soln, self.data, self.masks, self.gp_config)
         cache.drop_entry(self.outdir, 'map.pkl')
         pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-        cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
+        if 'map.pkl' not in self._stale_force_loaded:
+            cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
 
         if plot_fit:
             self.plot_multi(fn='fit.png')

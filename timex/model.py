@@ -81,11 +81,14 @@ def get_rv(key=None, priors=None, prior_dist=None, shape=None, name=None, bounde
 def _as_init_arrays(values):
     """Coerce MCMC init values to arrays.
 
-    get_map_soln unwraps single element posterior values to Python floats, and
-    a map.pkl written by a completed run is fed straight back to init_to_value
+    map_soln, whether freshly produced by optim.optimize or loaded from a
+    map.pkl written by a completed run, is fed straight back to init_to_value
     on a resume. numpyro substitutes those values verbatim for their sample
-    sites, so a raw float reaches get_rv's rv.squeeze() and raises. Arrays in,
-    arrays out, so downstream sites always get something array-like.
+    sites, so a raw float reaches get_rv's rv.squeeze() and raises. get_map_soln
+    now preserves free parameter shapes instead of unwrapping them, but a
+    map.pkl pickled before that change can still hold plain Python floats for
+    scalar sites, so this stays a defensive guard. Arrays in, arrays out, so
+    downstream sites always get something array-like.
     """
     return {k: jnp.asarray(v) for k, v in values.items()}
 

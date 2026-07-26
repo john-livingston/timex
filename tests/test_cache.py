@@ -101,3 +101,47 @@ def test_dataset_rename_changes_model_key(tmp_path):
     edited = copy.deepcopy(fp)
     edited['data'] = {'r': edited['data']['g']}
     assert cache.compute_keys(edited, {}, str(tmp_path))['model'] != base['model']
+
+
+def test_read_manifest_missing_returns_none(tmp_path):
+    assert cache.read_manifest(str(tmp_path)) is None
+
+
+def test_read_manifest_malformed_returns_none(tmp_path):
+    (tmp_path / cache.MANIFEST_NAME).write_text('{not json')
+    assert cache.read_manifest(str(tmp_path)) is None
+
+
+def test_read_manifest_wrong_format_version_returns_none(tmp_path):
+    """The version field is the lever for invalidating every cache in the wild."""
+    (tmp_path / cache.MANIFEST_NAME).write_text(
+        '{"format_version": 999, "map.pkl": "abc"}'
+    )
+    assert cache.read_manifest(str(tmp_path)) is None
+
+
+def test_write_then_read_roundtrip(tmp_path):
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')
+    manifest = cache.read_manifest(str(tmp_path))
+    assert manifest['map.pkl'] == 'abc'
+    assert manifest['format_version'] == cache.FORMAT_VERSION
+
+
+def test_write_manifest_preserves_other_entries(tmp_path):
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')
+    cache.write_manifest(str(tmp_path), 'trace.nc', 'def')
+    manifest = cache.read_manifest(str(tmp_path))
+    assert manifest['map.pkl'] == 'abc'
+    assert manifest['trace.nc'] == 'def'
+
+
+def test_is_valid_matches_only_on_exact_key(tmp_path):
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')
+    manifest = cache.read_manifest(str(tmp_path))
+    assert cache.is_valid(manifest, 'map.pkl', 'abc')
+    assert not cache.is_valid(manifest, 'map.pkl', 'xyz')
+    assert not cache.is_valid(manifest, 'trace.nc', 'abc')
+
+
+def test_is_valid_false_for_missing_manifest():
+    assert not cache.is_valid(None, 'map.pkl', 'abc')

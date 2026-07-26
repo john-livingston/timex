@@ -59,3 +59,46 @@ def compute_keys(fit_params, sys_params, wd):
         'sampler': {k: fit_params.get(k) for k in sorted(RUN_TIER)},
     })
     return {'model': model_key, 'run': run_key}
+
+
+MANIFEST_NAME = 'cache.json'
+
+
+def manifest_path(outdir):
+    return os.path.join(outdir, MANIFEST_NAME)
+
+
+def read_manifest(outdir):
+    """Parsed manifest, or None if absent, unreadable, or a foreign format version.
+
+    Returning None for a version mismatch is what makes bumping FORMAT_VERSION
+    invalidate every cache already on disk.
+    """
+    fp = manifest_path(outdir)
+    if not os.path.exists(fp):
+        return None
+    try:
+        with open(fp) as f:
+            manifest = json.load(f)
+    except (ValueError, OSError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    if manifest.get('format_version') != FORMAT_VERSION:
+        return None
+    return manifest
+
+
+def write_manifest(outdir, artifact, key):
+    """Record that `artifact` was written under `key`, preserving other entries."""
+    manifest = read_manifest(outdir) or {'format_version': FORMAT_VERSION}
+    manifest[artifact] = key
+    with open(manifest_path(outdir), 'w') as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+
+
+def is_valid(manifest, artifact, expected_key):
+    """True when the manifest records `artifact` as written under `expected_key`."""
+    if not manifest:
+        return False
+    return manifest.get(artifact) == expected_key

@@ -114,7 +114,7 @@ derived from the SHO representation using an `eps` regularization parameter.
 The 0.3.2 PyPI release is incompatible with JAX 0.6 and later, where `xla_client.ops`
 was removed. Both that and the later removal of `lax.zeros_like_array` in JAX 0.9 are
 fixed in git HEAD (see celerite2
-[PR #166](https://github.com/dfm/celerite2/pull/166)), which is why
+[PR #174](https://github.com/exoplanet-dev/celerite2/pull/174)), which is why
 [Installation](installation.md) specifies a git install.
 
 ### API

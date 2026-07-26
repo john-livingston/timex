@@ -78,6 +78,18 @@ def get_rv(key=None, priors=None, prior_dist=None, shape=None, name=None, bounde
     return rv
 
 
+def _as_init_arrays(values):
+    """Coerce MCMC init values to arrays.
+
+    get_map_soln unwraps single element posterior values to Python floats, and
+    a map.pkl written by a completed run is fed straight back to init_to_value
+    on a resume. numpyro substitutes those values verbatim for their sample
+    sites, so a raw float reaches get_rv's rv.squeeze() and raises. Arrays in,
+    arrays out, so downstream sites always get something array-like.
+    """
+    return {k: jnp.asarray(v) for k, v in values.items()}
+
+
 def sample(
     model_fn,
     map_soln,
@@ -87,7 +99,7 @@ def sample(
     cores=2
 ):
     rng_key = jax.random.PRNGKey(0)
-    init_strategy = init_to_value(values=map_soln)
+    init_strategy = init_to_value(values=_as_init_arrays(map_soln))
     nuts = NUTS(model_fn, dense_mass=True, init_strategy=init_strategy,
                 target_accept_prob=0.95)
     mcmc = MCMC(nuts, num_warmup=tune, num_samples=draws, num_chains=chains)

@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -134,3 +135,28 @@ def test_from_dir_loads_mismatched_artifacts_with_a_warning(wd, caplog):
     # loaded despite the mismatch, which is the whole point
     assert tf.trace is not None
     assert hasattr(tf, 'map_soln')
+
+
+@pytest.mark.slow
+def test_resumed_run_has_same_posterior_shapes_as_a_fresh_run(wd, caplog):
+    """A resumed run must not silently relabel summary.csv.
+
+    The MAP is fed back to init_to_value, so if get_map_soln collapses a site's
+    shape the resumed run samples it 0-d and arviz labels it 't0' instead of
+    't0[0]'. This is the reuse-MAP-then-resample path, so it is the one that
+    would drift.
+    """
+    fit_params, sys_params = _load_params(wd)
+    fresh = set(pd.read_csv(os.path.join(wd, 'out', 'summary.csv'), index_col=0).index)
+
+    fit_params['draws'] = SHORT['draws'] + 1
+    with caplog.at_level(logging.INFO):
+        caplog.clear()
+        tf = _run(wd, fit_params, sys_params)
+    assert 'reusing cached MAP solution' in caplog.text, 'not exercising the reuse path'
+
+    resumed = set(tf.summary.index)
+    assert resumed == fresh, (
+        f'resumed run relabelled parameters: only fresh {sorted(fresh - resumed)}, '
+        f'only resumed {sorted(resumed - fresh)}'
+    )

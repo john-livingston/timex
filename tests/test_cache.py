@@ -1,0 +1,103 @@
+import copy
+
+import pytest
+
+from timex import cache
+
+
+def _fit_params(tmp_path, contents='time,flux,fluxerr\n1.0,1.0,0.001\n'):
+    fp = tmp_path / 'a.csv'
+    fp.write_text(contents)
+    return dict(
+        data={'g': dict(file='a.csv', band='g')},
+        planets='c',
+        tc_pred=2460423.03,
+        fixed=['period'],
+        tune=2000, draws=2000, chains=2, cores=2, clobber=False,
+        n_restarts=1,
+    )
+
+
+def test_keys_are_stable_across_dict_ordering(tmp_path):
+    fp = _fit_params(tmp_path)
+    reordered = dict(reversed(list(fp.items())))
+    sys_params = {'m_star': 1.0, 'r_star': 1.0}
+    a = cache.compute_keys(fp, sys_params, str(tmp_path))
+    b = cache.compute_keys(reordered, dict(reversed(list(sys_params.items()))), str(tmp_path))
+    assert a == b
+
+
+def test_config_edit_changes_model_key(tmp_path):
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    edited = copy.deepcopy(fp)
+    edited['fixed'] = ['period', 't0']
+    assert cache.compute_keys(edited, {}, str(tmp_path))['model'] != base['model']
+
+
+def test_sys_params_edit_changes_model_key(tmp_path):
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {'m_star': 1.0}, str(tmp_path))
+    assert cache.compute_keys(fp, {'m_star': 1.1}, str(tmp_path))['model'] != base['model']
+
+
+def test_data_edit_changes_model_key(tmp_path):
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    (tmp_path / 'a.csv').write_text('time,flux,fluxerr\n1.0,2.0,0.001\n')
+    assert cache.compute_keys(fp, {}, str(tmp_path))['model'] != base['model']
+
+
+def test_format_version_bump_changes_model_key(tmp_path, monkeypatch):
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    monkeypatch.setattr(cache, 'FORMAT_VERSION', cache.FORMAT_VERSION + 1)
+    assert cache.compute_keys(fp, {}, str(tmp_path))['model'] != base['model']
+
+
+@pytest.mark.parametrize('key', ['tune', 'draws', 'chains'])
+def test_sampler_change_moves_run_key_only(tmp_path, key):
+    """The property that motivates two tiers: bumping draws must not discard the MAP."""
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    edited = copy.deepcopy(fp)
+    edited[key] = fp[key] + 1
+    new = cache.compute_keys(edited, {}, str(tmp_path))
+    assert new['model'] == base['model']
+    assert new['run'] != base['run']
+
+
+@pytest.mark.parametrize('key,value', [('cores', 8), ('clobber', True)])
+def test_no_effect_keys_change_neither_key(tmp_path, key, value):
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    edited = copy.deepcopy(fp)
+    edited[key] = value
+    assert cache.compute_keys(edited, {}, str(tmp_path)) == base
+
+
+def test_unknown_key_lands_in_model_tier(tmp_path):
+    """A future option nobody classified must invalidate more, never less."""
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    edited = copy.deepcopy(fp)
+    edited['some_future_option'] = True
+    assert cache.compute_keys(edited, {}, str(tmp_path))['model'] != base['model']
+
+
+def test_data_hashed_by_content_not_path(tmp_path):
+    """Copying a project directory must not invalidate a byte identical cache."""
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    other = tmp_path / 'elsewhere'
+    other.mkdir()
+    (other / 'a.csv').write_text((tmp_path / 'a.csv').read_text())
+    assert cache.compute_keys(fp, {}, str(other)) == base
+
+
+def test_dataset_rename_changes_model_key(tmp_path):
+    fp = _fit_params(tmp_path)
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    edited = copy.deepcopy(fp)
+    edited['data'] = {'r': edited['data']['g']}
+    assert cache.compute_keys(edited, {}, str(tmp_path))['model'] != base['model']

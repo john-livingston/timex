@@ -57,9 +57,16 @@ def _setup(tmp_path, name, mutate):
 
 
 def _run(wd, fit_params, sys_params):
+    """Mirrors cli()'s pipeline order: build, clip outliers, then sample.
+
+    clip_outliers is safe to call unconditionally: it skips any dataset
+    whose config lacks clip: true, so this only changes behavior for
+    matrix entries that actually enable clipping.
+    """
     from timex import fit
     tf = fit.TransitFit(sys_params, fit_params, wd=str(wd))
     tf.build_model(verbose=False, plot=False)
+    tf.clip_outliers()
     tf.sample(plot_fit=False, plot_systematics=False)
     return tf
 

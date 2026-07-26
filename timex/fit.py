@@ -405,7 +405,9 @@ class TransitFit:
         if not reuse_map:
             self.map_soln = map_soln
             logging.info("Model built successfully")
+            cache.drop_entry(self.outdir, 'map.pkl')
             pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
+            cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
         # for name in self.data.keys():
         #     fn = f'fit-{name}.png'
         #     self.plot(name, fn=fn)
@@ -503,7 +505,9 @@ class TransitFit:
                     if n_outliers > 0:
                         logging.info(f'clipped {n_outliers} outlier(s)')
                         clipped = True
+        cache.drop_entry(self.outdir, 'mask.pkl')
         pickle.dump(self.masks, open(os.path.join(self.outdir, 'mask.pkl'), 'wb'))
+        cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
         if clipped:
             self.build_model(start=self.map_soln, force=True)
             
@@ -524,7 +528,9 @@ class TransitFit:
                 cores=cores
             )
             self.trace = az.from_numpyro(mcmc)
+            cache.drop_entry(self.outdir, 'trace.nc')
             self.trace.to_netcdf(os.path.join(self.outdir, 'trace.nc'))
+            cache.write_manifest(self.outdir, 'trace.nc', self._cache_keys['run'])
 
         self.summary = util.get_summary(
             self.trace, self.data, self.bands, self.fit_basis, self.use_gp, self.fixed,
@@ -540,8 +546,10 @@ class TransitFit:
         if self.use_gp:
             from .model import _add_gp_predictions
             self.map_soln = _add_gp_predictions(self.map_soln, self.data, self.masks, self.gp_config)
+        cache.drop_entry(self.outdir, 'map.pkl')
         pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-            
+        cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
+
         if plot_fit:
             self.plot_multi(fn='fit.png')
             if self.chromatic:

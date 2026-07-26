@@ -102,3 +102,19 @@ def is_valid(manifest, artifact, expected_key):
     if not manifest:
         return False
     return manifest.get(artifact) == expected_key
+
+
+def drop_entry(outdir, artifact):
+    """Forget which key `artifact` was written under.
+
+    Called immediately before overwriting an artifact. If the process dies
+    between that write and the following write_manifest, no entry vouches for
+    the new file, so it reads as stale and is recomputed rather than being
+    loaded under the previous config's key.
+    """
+    manifest = read_manifest(outdir)
+    if not manifest or artifact not in manifest:
+        return
+    del manifest[artifact]
+    with open(manifest_path(outdir), 'w') as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)

@@ -145,3 +145,27 @@ def test_is_valid_matches_only_on_exact_key(tmp_path):
 
 def test_is_valid_false_for_missing_manifest():
     assert not cache.is_valid(None, 'map.pkl', 'abc')
+
+
+def test_drop_entry_removes_only_that_artifact(tmp_path):
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')
+    cache.write_manifest(str(tmp_path), 'trace.nc', 'def')
+    cache.drop_entry(str(tmp_path), 'map.pkl')
+    manifest = cache.read_manifest(str(tmp_path))
+    assert 'map.pkl' not in manifest
+    assert manifest['trace.nc'] == 'def'
+    assert manifest['format_version'] == cache.FORMAT_VERSION
+
+
+def test_drop_entry_is_a_noop_when_nothing_to_drop(tmp_path):
+    cache.drop_entry(str(tmp_path), 'map.pkl')          # no manifest at all
+    cache.write_manifest(str(tmp_path), 'trace.nc', 'def')
+    cache.drop_entry(str(tmp_path), 'map.pkl')          # manifest lacks the entry
+    assert cache.read_manifest(str(tmp_path))['trace.nc'] == 'def'
+
+
+def test_dropped_entry_no_longer_validates(tmp_path):
+    """The point of dropping: a half written artifact must read as stale."""
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')
+    cache.drop_entry(str(tmp_path), 'map.pkl')
+    assert not cache.is_valid(cache.read_manifest(str(tmp_path)), 'map.pkl', 'abc')

@@ -26,6 +26,7 @@ defaults = dict(
         chromatic_bump = False,
         use_gp = False,
         use_custom_optimizer = True,
+        n_restarts = 1, # MAP optimizer restarts: changes the solution, not the sampling
     ),
 
     sampler = dict(
@@ -33,7 +34,6 @@ defaults = dict(
         draws = 2000,
         chains = 2,
         cores = 2,
-        n_restarts = 1,
         clobber = False,
     ),
 

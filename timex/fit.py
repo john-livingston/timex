@@ -10,7 +10,7 @@ import logging
 import argparse
 import shutil
 
-from . import io, util, plot, model
+from . import io, util, plot, model, cache
 
 
 defaults = dict(
@@ -241,21 +241,51 @@ class TransitFit:
                 v['x_hr'] += delta
                 v['ref_time'] = self.ref_time
 
+    def _may_load(self, artifact, tier, manifest):
+        """Whether `artifact` in the output directory matches the current inputs.
+
+        On mismatch this warns and returns False, so the existing gates in
+        build_model/sample/clip_outliers recompute naturally. from_dir sets
+        _force_load_saved because loading a finished run for plotting is an
+        explicit request for those specific artifacts; it still warns.
+        """
+        if cache.is_valid(manifest, artifact, self._cache_keys[tier]):
+            return True
+        logging.warning(
+            f'{artifact} does not match the current config or data '
+            f'({tier} key changed); it will be recomputed'
+        )
+        if self._force_load_saved:
+            logging.warning(f'loading {artifact} anyway, as requested by from_dir')
+            return True
+        return False
+
     def load_saved(self):
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
-        # Load saved files if clobber is False OR if force_load_saved is True (from from_dir)
-        if not self.clobber or self._force_load_saved:
-            if os.path.exists(os.path.join(self.outdir, 'mask.pkl')):
+        # computed unconditionally: build_model/sample/clip_outliers record
+        # these keys when they write, including on the clobber path
+        self._cache_keys = cache.compute_keys(
+            self.fit_params, self.sys_params, self.wd)
+        if self.clobber and not self._force_load_saved:
+            return
+        manifest = cache.read_manifest(self.outdir)
+        if os.path.exists(os.path.join(self.outdir, 'mask.pkl')):
+            if self._may_load('mask.pkl', 'model', manifest):
                 logging.info('loading mask(s) from mask.pkl')
                 self.masks = pickle.load(open(os.path.join(self.outdir, 'mask.pkl'), 'rb'))
-            if os.path.exists(os.path.join(self.outdir, 'map.pkl')):
+        if os.path.exists(os.path.join(self.outdir, 'map.pkl')):
+            if self._may_load('map.pkl', 'model', manifest):
                 logging.info('loading MAP solution from map.pkl')
                 self.map_soln = pickle.load(open(os.path.join(self.outdir, 'map.pkl'), 'rb'))
-            if os.path.exists(os.path.join(self.outdir, 'trace.nc')):
+        # legacy trace.pkl is gated on the same manifest entry as trace.nc, so a
+        # pre-manifest output directory recomputes rather than resuming blind
+        if os.path.exists(os.path.join(self.outdir, 'trace.nc')):
+            if self._may_load('trace.nc', 'run', manifest):
                 logging.info('loading trace from trace.nc')
                 self.trace = az.from_netcdf(os.path.join(self.outdir, 'trace.nc'))
-            elif os.path.exists(os.path.join(self.outdir, 'trace.pkl')):
+        elif os.path.exists(os.path.join(self.outdir, 'trace.pkl')):
+            if self._may_load('trace.nc', 'run', manifest):
                 logging.info('loading trace from trace.pkl (legacy)')
                 self.trace = pickle.load(open(os.path.join(self.outdir, 'trace.pkl'), 'rb'))
 

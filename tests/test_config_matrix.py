@@ -153,6 +153,24 @@ def test_gp_fit_reports_edf_corrected_ic(tmp_path):
     # the correction only ever penalises, so the corrected BIC cannot be lower
     assert ic['BIC_edf'] > ic['BIC']
 
+    # pin the arithmetic, not just its direction: nparams_edf must be the
+    # uncorrected count with the GP hyperparameters swapped out for the edf
+    n_gp_hyper = sum(1 for k in tf.map_soln if k.startswith('gp_log_'))
+    assert n_gp_hyper > 0, 'expected GP hyperparameters in the MAP solution'
+    assert ic['nparams_edf'] == pytest.approx(
+        ic['nparams'] - n_gp_hyper + ic['edf'])
+
+    # and the reported edf must be the SUM over datasets, not a mean
+    from timex import model
+    edf_by_dataset = model.compute_gp_edf(
+        tf.map_soln, tf.data, tf.masks, tf.gp_config)
+    assert edf_by_dataset is not None
+    assert len(edf_by_dataset) == len(tf.data)
+    # abs tolerance, not rel: ic.txt writes edf via '{:.2f}', so up to 0.005
+    # is lost on the round trip through the file before we ever compare here.
+    # A mean instead of a sum would miss by tens of points, far outside this.
+    assert ic['edf'] == pytest.approx(sum(edf_by_dataset.values()), abs=1e-2)
+
 
 @pytest.mark.slow
 def test_non_gp_fit_reports_no_edf_rows(tmp_path):
@@ -160,6 +178,7 @@ def test_non_gp_fit_reports_no_edf_rows(tmp_path):
     tf = _run(wd, fit_params, sys_params)
     tf.save_results()
 
+    assert not tf.use_gp
     ic = _read_ic(wd / 'out')
     assert 'BIC' in ic
     for key in ('edf', 'nparams_edf', 'BIC_edf', 'AIC_edf', 'AICc_edf'):

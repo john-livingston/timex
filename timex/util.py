@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import pandas as pd
 from astropy.time import Time
@@ -282,7 +284,14 @@ def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
         ic = 2 * nparams - 2 * max_logp
     elif method == 'AICc':
         ic = 2 * nparams - 2 * max_logp
-        ic += 2 * (nparams**2 + nparams) / (ndata - nparams - 1)
+        denom = ndata - nparams - 1
+        if denom <= 0:
+            logging.warning(
+                f'AICc is undefined for nparams={nparams} and ndata={ndata}: '
+                f'the correction denominator is {denom}; returning nan'
+            )
+            return float('nan')
+        ic += 2 * (nparams**2 + nparams) / denom
 
     if verbose:
         print('Number of datapoints: {}'.format(ndata))

@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
@@ -10,6 +11,84 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLE = os.path.join(REPO_ROOT, 'examples', 'hip67522c')
 
 SHORT = dict(tune=5, draws=5, chains=1, cores=1)
+
+
+def _bare_fit(tmp_path, stale):
+    """A TransitFit carrying only what build_model reads, with a cached MAP.
+
+    Same construction shortcut as
+    test_fit_defaults.py::test_get_ic_counts_only_unmasked_points: a real
+    TransitFit needs data files and priors, and none of that is what these
+    tests are about.
+    """
+    from timex import fit
+
+    tf = fit.TransitFit.__new__(fit.TransitFit)
+    tf.outdir = str(tmp_path)
+    tf.clobber = False
+    tf._stale_force_loaded = set(stale)
+    tf._cache_keys = {'model': 'MODELKEY', 'run': 'RUNKEY'}
+    tf.map_soln = {'t0': np.array([0.05]), 'cached': np.array(1.0)}
+    tf.data, tf.priors, tf.masks = {}, {}, {}
+    tf.nplanets, tf.use_gp, tf.chromatic = 1, False, False
+    tf.fixed, tf.fit_basis = [], 'duration'
+    tf.include_mean = True
+    tf.include_flare = tf.chromatic_flare = False
+    tf.include_bump = tf.chromatic_bump = False
+    tf.use_custom_optimizer = True
+    tf.gp_config = None
+    tf.n_restarts = 1
+    return tf
+
+
+def _stub_build(monkeypatch, captured):
+    from timex import fit
+
+    def fake_build(*args, **kwargs):
+        captured.update(kwargs)
+        return object(), {'t0': np.array([0.07]), 'fresh': np.array(1.0)}
+
+    monkeypatch.setattr(fit.model, 'build', fake_build)
+
+
+def test_build_model_does_not_reuse_a_stale_force_loaded_map(tmp_path, monkeypatch):
+    """A map.pkl force-loaded past a key mismatch belongs to another config.
+
+    It is present, so the plain hasattr check reuses it and skips optimization;
+    the run then samples from a MAP that the current config never produced.
+    """
+    from timex import cache
+
+    captured = {}
+    _stub_build(monkeypatch, captured)
+    tf = _bare_fit(tmp_path, stale={'map.pkl'})
+
+    tf.build_model(plot=False)
+
+    assert captured['optimize'] is True, 'stale MAP was reused instead of re-optimized'
+    assert 'fresh' in tf.map_soln, 'the re-optimized solution did not replace the stale one'
+    manifest = cache.read_manifest(str(tmp_path)) or {}
+    assert 'map.pkl' not in manifest, (
+        'a MAP written during a session that force-loaded a stale one must not '
+        'be vouched for under the current key'
+    )
+
+
+def test_build_model_still_reuses_a_matching_cached_map(tmp_path, monkeypatch):
+    """The control for the test above: without the mismatch, reuse is the point."""
+    from timex import cache
+
+    captured = {}
+    _stub_build(monkeypatch, captured)
+    tf = _bare_fit(tmp_path, stale=set())
+
+    tf.build_model(plot=False)
+
+    assert captured['optimize'] is False, 'a valid cached MAP must not be re-optimized'
+    assert 'cached' in tf.map_soln
+    assert cache.read_manifest(str(tmp_path)) is None, (
+        'reusing a cached MAP writes nothing, so there is nothing to record'
+    )
 
 
 def _load_params(wd):
@@ -28,6 +107,17 @@ def _run(wd, fit_params, sys_params):
     tf.build_model(verbose=False, plot=False)
     tf.sample(plot_fit=False, plot_systematics=False)
     return tf
+
+
+def _write_fit_yaml(wd, fit_params):
+    """from_dir re-reads fit.yaml, so an edit only counts once it is on disk.
+
+    The baseline runs with SHORT applied in memory while the example's own
+    fit.yaml still asks for thousands of draws, so tests that go on to sample
+    through from_dir must write the shortened config out first.
+    """
+    with open(os.path.join(wd, 'fit.yaml'), 'w') as f:
+        yaml.safe_dump(fit_params, f)
 
 
 @pytest.fixture(scope='module')
@@ -178,6 +268,101 @@ def test_from_dir_clip_does_not_launder_stale_mask_under_current_key(wd, caplog)
         'force-loaded from a mismatched config'
     )
     assert 'mask.pkl' not in manifest, 'the safe outcome is no entry, so the next run recomputes'
+
+
+@pytest.mark.slow
+def test_from_dir_run_tier_edit_resamples_and_records_nothing_derived(wd, caplog):
+    """A stale trace must be treated as absent, not silently resumed from.
+
+    A finished run exists at the baseline's draws. Bumping draws only changes
+    the run key, so from_dir force-loads the mismatched trace.nc with a
+    warning. If sample() then trusts self.trace it skips MCMC entirely and
+    rederives summary.csv and map.pkl from the old draws, and because map.pkl
+    itself was never flagged it gets recorded under the current key, so the
+    next ordinary run adopts it with no warning at all.
+    """
+    from timex import cache, fit
+
+    fit_params, sys_params = _load_params(wd)
+    fit_params['draws'] = SHORT['draws'] + 1
+    _write_fit_yaml(wd, fit_params)
+
+    with caplog.at_level(logging.INFO):
+        caplog.clear()
+        tf = fit.TransitFit.from_dir(str(wd))
+        tf.build_model(verbose=False, plot=False)
+        tf.sample(plot_fit=False, plot_systematics=False)
+
+    assert 'loading trace.nc anyway' in caplog.text, 'setup: the trace must be force-loaded stale'
+    assert 'reusing cached MAP solution' in caplog.text, (
+        'setup: only the run key may have moved, so the MAP is still valid'
+    )
+    assert 'sampling for' in caplog.text, 'MCMC was skipped on a stale trace'
+
+    manifest = cache.read_manifest(os.path.join(wd, 'out'))
+    assert manifest.get('trace.nc') != tf._cache_keys['run']
+    assert 'trace.nc' not in manifest, 'a force-loaded stale trace was re-recorded as valid'
+    assert 'map.pkl' not in manifest, (
+        'map.pkl is derived from the trace, so it may not be recorded either'
+    )
+
+
+@pytest.mark.slow
+def test_from_dir_build_model_does_not_launder_stale_map_under_current_key(wd, caplog):
+    """The build_model half of the same property, on the model tier.
+
+    A model-tier edit invalidates map.pkl; from_dir loads it anyway. Reusing
+    it would sample from a MAP the current config never produced, and the
+    write site would then have nothing to guard.
+    """
+    from timex import cache, fit
+
+    fit_params, sys_params = _load_params(wd)
+    fit_params['uniform']['ror'] = [0.03, 0.17]
+    _write_fit_yaml(wd, fit_params)
+
+    with caplog.at_level(logging.INFO):
+        caplog.clear()
+        tf = fit.TransitFit.from_dir(str(wd))
+        tf.build_model(verbose=False, plot=False)
+
+    assert 'loading map.pkl anyway' in caplog.text, 'setup: the MAP must be force-loaded stale'
+    assert 'building and optimizing model' in caplog.text, 'a stale MAP was reused'
+
+    manifest = cache.read_manifest(os.path.join(wd, 'out'))
+    assert manifest.get('map.pkl') != tf._cache_keys['model']
+    assert 'map.pkl' not in manifest, 'the safe outcome is no entry, so the next run recomputes'
+
+
+@pytest.mark.slow
+def test_from_dir_sample_does_not_launder_stale_map_when_the_trace_is_fresh(wd, caplog):
+    """Isolates the map.pkl guard at the end of sample from the trace's.
+
+    Removing trace.nc leaves nothing to force-load on the run tier, so MCMC
+    runs from scratch and its trace is recorded normally. Only map.pkl is
+    flagged, so it is the one artifact that must not be recorded.
+    """
+    from timex import cache, fit
+
+    os.remove(os.path.join(wd, 'out', 'trace.nc'))
+    fit_params, sys_params = _load_params(wd)
+    fit_params['uniform']['ror'] = [0.03, 0.17]
+    _write_fit_yaml(wd, fit_params)
+
+    with caplog.at_level(logging.INFO):
+        caplog.clear()
+        tf = fit.TransitFit.from_dir(str(wd))
+        tf.build_model(verbose=False, plot=False)
+        tf.sample(plot_fit=False, plot_systematics=False)
+
+    assert 'loading map.pkl anyway' in caplog.text, 'setup: the MAP must be force-loaded stale'
+    assert 'loading trace' not in caplog.text, 'setup: there must be no trace to force-load'
+
+    manifest = cache.read_manifest(os.path.join(wd, 'out'))
+    assert manifest.get('trace.nc') == tf._cache_keys['run'], (
+        'the freshly sampled trace is valid, so this test really does isolate map.pkl'
+    )
+    assert 'map.pkl' not in manifest, 'a force-loaded stale MAP was re-recorded as valid'
 
 
 @pytest.mark.slow

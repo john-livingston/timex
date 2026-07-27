@@ -248,8 +248,19 @@ class TransitFit:
         build_model/sample/clip_outliers recompute naturally. from_dir sets
         _force_load_saved because loading a finished run for plotting is an
         explicit request for those specific artifacts; it still warns, and
-        records the mismatch in _stale_force_loaded so the write sites do not
-        launder it into looking validated under the current key.
+        records the mismatch in _stale_force_loaded.
+
+        For map.pkl and trace.nc, a name in _stale_force_loaded is never
+        reused as if it matched (build_model re-optimizes, sample re-runs
+        MCMC) and is never recorded in the manifest under the current key,
+        nor is anything derived from it. mask.pkl is a known exception:
+        clip_outliers gates on `self.masks[name] is None` rather than
+        consulting _stale_force_loaded, so a force-loaded stale mask is
+        silently reused for the model build and the likelihood instead of
+        being recomputed. The safe outcome for map.pkl/trace.nc is no
+        manifest entry at all, so the next ordinary run recomputes rather
+        than trusting an artifact this session only loaded because from_dir
+        asked for it.
         """
         if cache.is_valid(manifest, artifact, self._cache_keys[tier]):
             return True
@@ -260,6 +271,11 @@ class TransitFit:
         if self._force_load_saved:
             logging.warning(f'loading {artifact} anyway, as requested by from_dir')
             self._stale_force_loaded.add(artifact)
+            if artifact == 'mask.pkl':
+                logging.warning(
+                    'clip_outliers does not consult _stale_force_loaded, so this '
+                    'stale mask.pkl will be reused as-is, not recomputed'
+                )
             return True
         return False
 
@@ -392,7 +408,11 @@ class TransitFit:
         # Reuse a cached MAP solution (and only rebuild the model function) unless
         # forced/clobbering. model_fn itself is cheap and always needed for sampling,
         # so it must be reconstructed even when map_soln is loaded from map.pkl.
-        reuse_map = not (force or self.clobber) and hasattr(self, 'map_soln')
+        # A map.pkl force-loaded despite a key mismatch belongs to a different
+        # config, so it is present but must not be reused: treat it as absent.
+        reuse_map = (not (force or self.clobber)
+                     and hasattr(self, 'map_soln')
+                     and 'map.pkl' not in self._stale_force_loaded)
         if reuse_map:
             logging.info('reusing cached MAP solution; rebuilding model function')
         else:
@@ -441,12 +461,20 @@ class TransitFit:
     def get_ic(self, ic='BIC', verbose=False):
         soln, max_logp = util.get_map_soln(self.trace)
         nparams = self._count_params()
-        ndata = sum([len(v['x']) for v in self.data.values()])
+        ndata = self._count_data()
         return util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=verbose)
 
     def _count_params(self):
         """Count free parameters from MAP solution, excluding deterministics and observed."""
         return util.count_free_params(self.map_soln)
+
+    def _count_data(self):
+        """Points that entered the likelihood, excluding clipped outliers."""
+        total = 0
+        for name, data in self.data.items():
+            mask = self.masks.get(name)
+            total += len(data['x']) if mask is None else int(np.sum(mask))
+        return total
         
     def plot_systematics(self, name, style=2, fn=None):
 
@@ -522,7 +550,12 @@ class TransitFit:
             
     def sample(self, fn=None, plot_fit=True, plot_systematics=True):
 
-        if self.clobber or self.trace is None:
+        # a trace.nc force-loaded despite a key mismatch was produced under a
+        # different config, so it is present but unusable: sample as if it were
+        # absent, and never vouch for it or for the map.pkl derived from it
+        # below, whether or not MCMC re-ran
+        stale_trace = 'trace.nc' in self._stale_force_loaded
+        if self.clobber or self.trace is None or stale_trace:
             tune = self.tune
             draws = self.draws
             chains = self.chains
@@ -558,7 +591,9 @@ class TransitFit:
             self.map_soln = _add_gp_predictions(self.map_soln, self.data, self.masks, self.gp_config)
         cache.drop_entry(self.outdir, 'map.pkl')
         pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-        if 'map.pkl' not in self._stale_force_loaded:
+        # this map.pkl is derived from the trace, so a stale trace disqualifies
+        # it even though map.pkl itself was never flagged
+        if not stale_trace and 'map.pkl' not in self._stale_force_loaded:
             cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
 
         if plot_fit:
@@ -762,11 +797,39 @@ class TransitFit:
         with open(os.path.join(self.outdir, 'ic.txt'), 'w') as f:
             soln, max_logp = util.get_map_soln(self.trace)
             nparams = self._count_params()
-            ndata = sum([len(v['x']) for v in self.data.values()])
+            ndata = self._count_data()
             ics = 'BIC AIC AICc'.split()
             for ic in ics:
                 val = util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=False)
                 f.write(f'{ic} {val:.2f}\n')
+
+            # a GP is charged for its hyperparameters but absorbs far more
+            # degrees of freedom, so report a corrected count alongside. This
+            # does real GP linear algebra and reads GP hyperparameters back
+            # out of map_soln, so it can fail (e.g. a force-loaded map.pkl
+            # whose gp.per_dataset no longer matches the current config); a
+            # failure here must not cost the uncorrected rows above or the
+            # posterior samples / corrected light curves saved below.
+            if self.use_gp:
+                try:
+                    edf_by_dataset = model.compute_gp_edf(
+                        self.map_soln, self.data, self.masks, self.gp_config)
+                    if edf_by_dataset is not None:
+                        edf = sum(edf_by_dataset.values())
+                        n_gp_hyper = sum(1 for k in self.map_soln if k.startswith('gp_log_'))
+                        nparams_edf = nparams - n_gp_hyper + edf
+                        f.write(f'edf {edf:.2f}\n')
+                        f.write(f'nparams {nparams}\n')
+                        f.write(f'nparams_edf {nparams_edf:.2f}\n')
+                        for ic in ics:
+                            val = util.compute_ic(soln, max_logp, nparams_edf, ndata,
+                                                  method=ic, verbose=False)
+                            f.write(f'{ic}_edf {val:.2f}\n')
+                except Exception as e:
+                    logging.warning(
+                        f'failed to compute GP effective degrees of freedom '
+                        f'({type(e).__name__}: {e}); skipping corrected IC rows'
+                    )
         self.save_posterior_samples()
         self.save_corrected()
 

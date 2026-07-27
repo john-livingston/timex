@@ -64,6 +64,29 @@ def test_add_gp_predictions_missing_mean_matches_explicit_zero(map_soln):
     assert not np.allclose(a['g_gp_pred'], c['g_gp_pred'])
 
 
+def test_add_gp_predictions_sums_over_the_planet_axis(map_soln_multiplanet):
+    """The GP is conditioned on residuals, so an unsubtracted second transit
+    would be absorbed into the GP prediction instead of the transit model."""
+    datasets, masks = _gp_inputs()
+    soln = dict(map_soln_multiplanet)
+    soln['gp_log_amp'] = np.array(-1.0)
+    soln['gp_log_scale'] = np.array(-2.0)
+
+    presummed = dict(soln)
+    presummed['g_light_curves'] = soln['g_light_curves'].sum(axis=-1)
+    first_only = dict(soln)
+    first_only['g_light_curves'] = soln['g_light_curves'][:, 0]
+
+    out = model._add_gp_predictions(dict(soln), datasets, masks, gp_config=None)
+    reference = model._add_gp_predictions(presummed, datasets, masks, gp_config=None)
+    wrong = model._add_gp_predictions(first_only, datasets, masks, gp_config=None)
+
+    assert out['g_gp_pred'].shape == (100,)
+    assert np.allclose(out['g_gp_pred'], reference['g_gp_pred'])
+    # and the comparison is not vacuous: dropping a planet does change it
+    assert not np.allclose(out['g_gp_pred'], wrong['g_gp_pred'])
+
+
 def test_as_init_arrays_converts_python_scalars():
     """A map.pkl pickled before get_map_soln was changed to preserve free
     parameter shapes can still hold plain Python floats for scalar sites.
@@ -90,3 +113,73 @@ def test_as_init_arrays_leaves_values_unchanged_numerically():
     out = model._as_init_arrays({'t0': 0.05, 'ror': np.array([0.1])})
     assert float(out['t0']) == 0.05
     assert float(out['ror'][0]) == 0.1
+
+
+def test_build_gp_uses_log10_convention_and_jitter_diagonal():
+    """Amplitude and scale are stored as log10, and the diagonal is
+    exp(2*log_sigma_lc) + yerr**2. Both are easy to get wrong, so this pins
+    the values rather than just checking the call succeeds."""
+    from celerite2 import GaussianProcess, terms
+    from timex import model
+
+    n = 20
+    x = np.linspace(0.0, 0.2, n)
+    yerr = np.full(n, 0.3)
+    soln = {
+        'gp_log_amp': np.array(1.0),      # 10**1.0 = 10.0, but exp(1.0) = 2.718
+        'gp_log_scale': np.array(-1.5),   # 10**-1.5 = 0.0316, but exp(-1.5) = 0.223
+        'g_log_sigma_lc': np.array(np.log(0.4)),
+    }
+    gp, diag = model._build_gp(soln, 'g', x, yerr, gp_config=None)
+
+    assert np.allclose(diag, 0.4**2 + 0.3**2)
+
+    v = np.ones(n)
+    right = GaussianProcess(terms.Matern32Term(sigma=10.0, rho=10**-1.5))
+    right.compute(x, diag=diag)
+    assert np.allclose(gp.apply_inverse(v), right.apply_inverse(v))
+
+    # and it must NOT match the natural log reading of the same numbers
+    wrong = GaussianProcess(terms.Matern32Term(sigma=np.exp(1.0), rho=np.exp(-1.5)))
+    wrong.compute(x, diag=diag)
+    assert not np.allclose(gp.apply_inverse(v), wrong.apply_inverse(v))
+
+
+def test_build_gp_honours_per_dataset_hyperparameters():
+    from timex import model
+
+    n = 10
+    x = np.linspace(0.0, 0.1, n)
+    yerr = np.full(n, 0.1)
+    soln = {
+        'gp_log_amp_g': np.array(0.0),
+        'gp_log_amp_r': np.array(1.0),
+        'gp_log_scale': np.array(-2.0),
+        'g_log_sigma_lc': np.array(-1.0),
+        'r_log_sigma_lc': np.array(-1.0),
+    }
+    cfg = {'per_dataset': ['log_amp']}
+    gp_g, _ = model._build_gp(soln, 'g', x, yerr, cfg)
+    gp_r, _ = model._build_gp(soln, 'r', x, yerr, cfg)
+    # r has 10x the amplitude, so its kernel is not the same object's twin
+    assert gp_g.apply_inverse(np.ones(n))[0] != gp_r.apply_inverse(np.ones(n))[0]
+
+
+def test_build_gp_honours_per_dataset_log_scale():
+    from timex import model
+
+    n = 10
+    x = np.linspace(0.0, 0.1, n)
+    yerr = np.full(n, 0.1)
+    soln = {
+        'gp_log_amp': np.array(0.0),
+        'gp_log_scale_g': np.array(-2.0),
+        'gp_log_scale_r': np.array(-0.5),
+        'g_log_sigma_lc': np.array(-1.0),
+        'r_log_sigma_lc': np.array(-1.0),
+    }
+    cfg = {'per_dataset': ['log_scale']}
+    gp_g, _ = model._build_gp(soln, 'g', x, yerr, cfg)
+    gp_r, _ = model._build_gp(soln, 'r', x, yerr, cfg)
+    # r has a much longer scale, so its kernel is not the same object's twin
+    assert gp_g.apply_inverse(np.ones(n))[0] != gp_r.apply_inverse(np.ones(n))[0]

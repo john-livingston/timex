@@ -25,6 +25,16 @@ def read_generic(
     verbose=True
 ):
 
+    # a non-positive threshold makes np.diff(x) > chunk_thresh true at every
+    # sample, so every point becomes its own chunk and an N x N identity is
+    # appended to the design matrix, which fits the data perfectly and
+    # silently destroys the transit
+    if chunk_offset and (chunk_thresh is None or chunk_thresh <= 0):
+        raise ValueError(
+            f'chunk_thresh must be > 0 when chunk_offset is enabled, got '
+            f'{chunk_thresh!r}: every point would start its own offset column'
+        )
+
     # READ DATA
     if fp.endswith('.txt'):
         with open(fp) as f:
@@ -118,6 +128,15 @@ def read_generic(
         x, y, yerr = x[ix], y[ix], yerr[ix]
         if X is not None:
             X = X[ix]
+
+    # trimming past the end of the time series leaves nothing to fit, and the
+    # reductions below then fail with an opaque numpy zero-size error far from
+    # the misconfiguration that caused it
+    if x.size == 0:
+        raise ValueError(
+            f'trim_beg={trim_beg} and trim_end={trim_end} left {x.size} points '
+            f'in {os.path.basename(fp)}'
+        )
 
     # COMPUTE APPROXIMATE EXPOSURE TIME
     texp = np.median(np.diff(x))

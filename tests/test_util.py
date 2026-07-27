@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from timex import util
 
@@ -401,3 +402,29 @@ def test_bic_and_aic_unaffected_by_the_aicc_guard():
         ic = util.compute_ic({}, -100.0, nparams=50, ndata=50,
                              method=method, verbose=False)
         assert np.isfinite(ic)
+
+
+@pytest.mark.parametrize('band,expected', [
+    # Sloan filters: claret distinguishes these from the Stromgren filters of
+    # the same letter by a trailing asterisk
+    ('g', 'g*'),
+    ('r', 'r*'),
+    ('i', 'i*'),
+    ('z', 'z*'),
+    # multi character names that are substrings of 'griz'. these are the cases
+    # `band in 'griz'` gets wrong: a substring test matches them and appends a
+    # spurious asterisk, producing a band name claret does not have
+    ('gr', 'gr'),
+    ('ri', 'ri'),
+    ('iz', 'iz'),
+    ('gri', 'gri'),
+    ('griz', 'griz'),
+    ('', ''),
+    # names that are not substrings, unaffected either way
+    ('zs', 'zs'),
+    ('ip', 'ip'),
+    ('B', 'B'),
+    ('Kp', 'Kp'),
+])
+def test_claret_band_maps_only_exact_sloan_filters(band, expected):
+    assert util.claret_band(band) == expected

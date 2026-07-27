@@ -156,6 +156,21 @@ def get_outlier_mask(x, y, name, map_soln, use_gp, nsig=7, include_flare=False, 
 
     return mask
 
+# Sloan filters, which claret's tables distinguish from the Stromgren filters
+# of the same letter by a trailing asterisk
+SLOAN_BANDS = frozenset(['g', 'r', 'i', 'z'])
+
+
+def claret_band(band):
+    """The claret table name for a filter name.
+
+    Membership has to be exact. `band in 'griz'` is a substring test, so it
+    also matches 'gr', 'ri', 'iz' and '', appending an asterisk and asking
+    claret for a band it does not have.
+    """
+    return f'{band}*' if band in SLOAN_BANDS else band
+
+
 def get_priors(fit_basis, star, planets, fixed, bands, tc_guess, tc_guess_unc, uniform={}):
 
     priors = {}
@@ -173,7 +188,7 @@ def get_priors(fit_basis, star, planets, fixed, bands, tc_guess, tc_guess_unc, u
     else:
         raise ValueError(f"fit_basis={fit_basis} not supported")
 
-    bands_ = [f'{band}*' if band in 'griz' else band for band in bands]
+    bands_ = [claret_band(band) for band in bands]
     ldp = [ld.claret(band, *star['teff'], *star['logg'], *star['feh']) for band in bands_]
     priors['u_star'] = {band:ld[::2] for band,ld in zip(bands, ldp)}
     priors['u_star_unc'] = {band:ld[1::2] for band,ld in zip(bands, ldp)}

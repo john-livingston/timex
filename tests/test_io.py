@@ -1,5 +1,6 @@
 import inspect
 import numpy as np
+import pandas as pd
 import pytest
 
 from timex import fit, io
@@ -122,3 +123,76 @@ def test_read_generic_keeps_points_a_partial_trim_leaves(synthetic_lc):
     x, _, _, _, _, _, _ = io.read_generic(
         synthetic_lc, binsize=None, trim_beg=0.02, trim_end=0.02, verbose=False)
     assert 0 < x.size < 120
+
+
+@pytest.fixture
+def unit_spaced_lc(tmp_path):
+    """A 10 point light curve one day apart, with two covariates.
+
+    read_generic subtracts int(x.min()), so this reads back as x = [0..9]
+    exactly, which makes the trim boundaries assertable as literals rather
+    than as floating point neighbourhoods.
+    """
+    n = 10
+    t = 2460000.0 + np.arange(n, dtype=float)
+    fp = tmp_path / 'unit.csv'
+    pd.DataFrame({
+        'time': t,
+        'flux': np.full(n, 1.0) + np.arange(n) * 1e-4,
+        'fluxerr': np.full(n, 1e-3),
+        'airmass': 1.2 + np.arange(n) * 0.01,
+        'dx': np.arange(n) * 0.5,
+    }).to_csv(fp, index=False)
+    return str(fp)
+
+
+def test_trim_beg_drops_points_up_to_and_including_the_cut(unit_spaced_lc):
+    """The comparison is strict: x > x.min() + trim_beg, so the point sitting
+    exactly on the cut is dropped. A >= would keep it, and a sign flip would
+    keep everything."""
+    x, y, yerr, X, texp, x_hr, ref = io.read_generic(
+        unit_spaced_lc, binsize=None, trim_beg=2.0, verbose=False)
+    assert len(x) == 7
+    assert x[0] == 3.0
+    assert x[-1] == 9.0
+
+
+def test_trim_end_drops_points_from_the_cut_onward(unit_spaced_lc):
+    """Mirror of the above at the other end: x < x.max() - trim_end."""
+    x, y, yerr, X, texp, x_hr, ref = io.read_generic(
+        unit_spaced_lc, binsize=None, trim_end=1.0, verbose=False)
+    assert len(x) == 8
+    assert x[0] == 0.0
+    assert x[-1] == 7.0
+
+
+def test_trim_beg_and_end_compose(unit_spaced_lc):
+    x, y, yerr, X, texp, x_hr, ref = io.read_generic(
+        unit_spaced_lc, binsize=None, trim_beg=2.0, trim_end=1.0, verbose=False)
+    assert list(x) == [3.0, 4.0, 5.0, 6.0, 7.0]
+
+
+def test_trim_keeps_the_design_matrix_aligned(unit_spaced_lc):
+    """Dropping the X = X[ix] line leaves the design matrix at its original
+    length, which only surfaces later as a shape mismatch in the likelihood."""
+    x, y, yerr, X, texp, x_hr, ref = io.read_generic(
+        unit_spaced_lc, binsize=None, trim_beg=2.0, trim_end=1.0, verbose=False)
+    assert X is not None
+    assert X.shape[0] == len(x) == 5
+    # the surviving rows must be the ones belonging to the kept points, not
+    # simply the first five. covariates are standardized over the whole series
+    # before trimming, so row i carries (i - 4.5) / sqrt(8.25) for this
+    # fixture, hand derived from mean 4.5 and population std sqrt(82.5/10).
+    # index 3 is the first survivor; index 0 would give -1.567.
+    assert X[0, 0] == pytest.approx((3 - 4.5) / np.sqrt(8.25), rel=1e-6)
+    assert X[-1, 0] == pytest.approx((7 - 4.5) / np.sqrt(8.25), rel=1e-6)
+
+
+def test_trim_that_removes_every_point_raises(unit_spaced_lc):
+    """A units mistake, days for minutes say, otherwise surfaces as an opaque
+    numpy zero-size reduction from np.median(np.diff(x))."""
+    with pytest.raises(ValueError) as excinfo:
+        io.read_generic(unit_spaced_lc, binsize=None, trim_beg=99.0, verbose=False)
+    msg = str(excinfo.value)
+    assert 'trim_beg' in msg and '99.0' in msg
+    assert 'unit.csv' in msg

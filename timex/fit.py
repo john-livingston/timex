@@ -441,12 +441,20 @@ class TransitFit:
     def get_ic(self, ic='BIC', verbose=False):
         soln, max_logp = util.get_map_soln(self.trace)
         nparams = self._count_params()
-        ndata = sum([len(v['x']) for v in self.data.values()])
+        ndata = self._count_data()
         return util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=verbose)
 
     def _count_params(self):
         """Count free parameters from MAP solution, excluding deterministics and observed."""
         return util.count_free_params(self.map_soln)
+
+    def _count_data(self):
+        """Points that entered the likelihood, excluding clipped outliers."""
+        total = 0
+        for name, data in self.data.items():
+            mask = self.masks.get(name)
+            total += len(data['x']) if mask is None else int(np.sum(mask))
+        return total
         
     def plot_systematics(self, name, style=2, fn=None):
 

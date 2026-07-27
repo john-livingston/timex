@@ -323,3 +323,33 @@ def test_get_map_soln_preserves_free_param_shapes():
     assert soln['t0'].shape == (1,), 'free param lost its trailing singleton dim'
     assert soln['g_log_sigma_lc'].shape == (), 'genuinely 0-d site was inflated'
     assert soln['g_light_curves'].shape == (10,), 'derived entry should still be squeezed'
+
+
+def test_aicc_is_nan_when_denominator_is_not_positive(caplog):
+    """AICc is undefined once nparams reaches ndata-1. Silently returning a
+    negative number is how a broken parameter count went unnoticed before."""
+    import logging
+    from timex import util
+
+    with caplog.at_level(logging.WARNING):
+        ic = util.compute_ic({}, -100.0, nparams=50, ndata=50,
+                             method='AICc', verbose=False)
+    assert np.isnan(ic)
+    assert '50' in caplog.text
+
+
+def test_aicc_is_finite_when_denominator_is_positive():
+    from timex import util
+
+    ic = util.compute_ic({}, -100.0, nparams=10, ndata=100,
+                         method='AICc', verbose=False)
+    assert np.isfinite(ic)
+
+
+def test_bic_and_aic_unaffected_by_the_aicc_guard():
+    from timex import util
+
+    for method in ('BIC', 'AIC'):
+        ic = util.compute_ic({}, -100.0, nparams=50, ndata=50,
+                             method=method, verbose=False)
+        assert np.isfinite(ic)

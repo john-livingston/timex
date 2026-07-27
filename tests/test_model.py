@@ -93,25 +93,33 @@ def test_as_init_arrays_leaves_values_unchanged_numerically():
 
 
 def test_build_gp_uses_log10_convention_and_jitter_diagonal():
-    """The amplitude and scale are stored as log10; the diagonal is
-    exp(2*log_sigma_lc) + yerr**2. Both conventions are easy to get wrong and
-    are the reason this construction is shared rather than duplicated."""
+    """Amplitude and scale are stored as log10, and the diagonal is
+    exp(2*log_sigma_lc) + yerr**2. Both are easy to get wrong, so this pins
+    the values rather than just checking the call succeeds."""
+    from celerite2 import GaussianProcess, terms
     from timex import model
 
     n = 20
     x = np.linspace(0.0, 0.2, n)
     yerr = np.full(n, 0.3)
     soln = {
-        'gp_log_amp': np.array(0.0),        # 10**0.0 = 1.0
-        'gp_log_scale': np.array(-2.0),     # 10**-2.0 = 0.01
+        'gp_log_amp': np.array(1.0),      # 10**1.0 = 10.0, but exp(1.0) = 2.718
+        'gp_log_scale': np.array(-1.5),   # 10**-1.5 = 0.0316, but exp(-1.5) = 0.223
         'g_log_sigma_lc': np.array(np.log(0.4)),
     }
     gp, diag = model._build_gp(soln, 'g', x, yerr, gp_config=None)
 
-    expected_diag = 0.4**2 + 0.3**2
-    assert np.allclose(diag, expected_diag)
-    # a computed GP can solve; this also proves compute() was called
-    assert gp.apply_inverse(np.ones(n)).shape == (n,)
+    assert np.allclose(diag, 0.4**2 + 0.3**2)
+
+    v = np.ones(n)
+    right = GaussianProcess(terms.Matern32Term(sigma=10.0, rho=10**-1.5))
+    right.compute(x, diag=diag)
+    assert np.allclose(gp.apply_inverse(v), right.apply_inverse(v))
+
+    # and it must NOT match the natural log reading of the same numbers
+    wrong = GaussianProcess(terms.Matern32Term(sigma=np.exp(1.0), rho=np.exp(-1.5)))
+    wrong.compute(x, diag=diag)
+    assert not np.allclose(gp.apply_inverse(v), wrong.apply_inverse(v))
 
 
 def test_build_gp_honours_per_dataset_hyperparameters():
@@ -131,4 +139,24 @@ def test_build_gp_honours_per_dataset_hyperparameters():
     gp_g, _ = model._build_gp(soln, 'g', x, yerr, cfg)
     gp_r, _ = model._build_gp(soln, 'r', x, yerr, cfg)
     # r has 10x the amplitude, so its kernel is not the same object's twin
+    assert gp_g.apply_inverse(np.ones(n))[0] != gp_r.apply_inverse(np.ones(n))[0]
+
+
+def test_build_gp_honours_per_dataset_log_scale():
+    from timex import model
+
+    n = 10
+    x = np.linspace(0.0, 0.1, n)
+    yerr = np.full(n, 0.1)
+    soln = {
+        'gp_log_amp': np.array(0.0),
+        'gp_log_scale_g': np.array(-2.0),
+        'gp_log_scale_r': np.array(-0.5),
+        'g_log_sigma_lc': np.array(-1.0),
+        'r_log_sigma_lc': np.array(-1.0),
+    }
+    cfg = {'per_dataset': ['log_scale']}
+    gp_g, _ = model._build_gp(soln, 'g', x, yerr, cfg)
+    gp_r, _ = model._build_gp(soln, 'r', x, yerr, cfg)
+    # r has a much longer scale, so its kernel is not the same object's twin
     assert gp_g.apply_inverse(np.ones(n))[0] != gp_r.apply_inverse(np.ones(n))[0]

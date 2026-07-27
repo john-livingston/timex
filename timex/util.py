@@ -52,6 +52,13 @@ def get_residuals(name, y, soln, mask=None):
 
     return y[mask] - tra_mod - sys_mod
 
+# numpyro deterministic sites, the observed site, and the post-hoc GP
+# prediction added by model._add_gp_predictions. None of these are free
+# parameters, so none may be counted when computing BIC/AIC/AICc.
+DERIVED_SUFFIXES = ('_light_curves', '_light_curves_hr', '_lc_pred', '_lm',
+                    '_flare', '_bump', '_y_observed', '_gp_pred')
+
+
 def get_map_soln(trace):
     # arviz trace is an InferenceData object
     # numpyro uses potential_energy (= -logp), pymc uses lp
@@ -69,11 +76,15 @@ def get_map_soln(trace):
     soln = {}
     for k, v in trace_map.data_vars.items():
         val = np.asarray(v.values)
-        if val.size == 1:
-            soln[k] = val.item()
-        else:
-            # Squeeze trailing singleton dims (numpyro adds shape-1 dims for scalar params)
+        if k.endswith(DERIVED_SUFFIXES):
+            # derived quantities are consumed as flat arrays, so drop the
+            # trailing singleton dims numpyro adds
             soln[k] = np.squeeze(val)
+        else:
+            # free parameters are fed back to init_to_value on resume, and
+            # numpyro propagates the init shape into the sampled site, so the
+            # site's own shape has to survive the round trip unchanged
+            soln[k] = val
     return soln, float(np.nanmax(lp_values))
 
 def get_var_names(data, bands, fit_basis, use_gp, fixed,
@@ -256,13 +267,6 @@ def bin_df(df, timecol='time', errcol='flux_err', binsize=60/86400., kind='media
     # bin error is the median point error scaled by sqrt(N) regardless of kind
     df_binned[errcol] = groups[errcol].median() / np.sqrt(groups.size())
     return df_binned.dropna()
-
-# numpyro deterministic sites, the observed site, and the post-hoc GP
-# prediction added by model._add_gp_predictions. None of these are free
-# parameters, so none may be counted when computing BIC/AIC/AICc.
-DERIVED_SUFFIXES = ('_light_curves', '_light_curves_hr', '_lc_pred', '_lm',
-                    '_flare', '_bump', '_y_observed', '_gp_pred')
-
 
 def count_free_params(soln):
     """Count free parameters in a MAP solution dict, excluding derived quantities."""

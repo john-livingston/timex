@@ -300,3 +300,26 @@ def test_get_map_soln_ignores_nan_logp():
     assert soln['a'] == 4.0
     assert np.isfinite(max_lp)
     assert max_lp == 5.0
+
+
+def test_get_map_soln_preserves_free_param_shapes():
+    """A MAP is fed back to init_to_value on resume, and numpyro propagates the
+    init shape into the sampled site. Collapsing (1,) to a scalar here makes a
+    resumed run's posterior differently shaped from a fresh run's.
+    """
+    import arviz as az
+    from timex import util
+
+    idata = az.from_dict(
+        posterior={
+            't0': np.zeros((2, 5, 1)),           # free param, shape (1,) per draw
+            'g_log_sigma_lc': np.zeros((2, 5)),  # free param, genuinely 0-d per draw
+            'g_light_curves': np.zeros((2, 5, 10, 1)),  # derived, squeezed as before
+        },
+        sample_stats={'lp': np.zeros((2, 5))},
+    )
+    soln, _ = util.get_map_soln(idata)
+
+    assert soln['t0'].shape == (1,), 'free param lost its trailing singleton dim'
+    assert soln['g_log_sigma_lc'].shape == (), 'genuinely 0-d site was inflated'
+    assert soln['g_light_curves'].shape == (10,), 'derived entry should still be squeezed'

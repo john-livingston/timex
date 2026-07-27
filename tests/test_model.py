@@ -62,3 +62,31 @@ def test_add_gp_predictions_missing_mean_matches_explicit_zero(map_soln):
     nonzero['gp_log_scale'] = np.array(-2.0)
     c = model._add_gp_predictions(nonzero, datasets, masks, gp_config=None)
     assert not np.allclose(a['g_gp_pred'], c['g_gp_pred'])
+
+
+def test_as_init_arrays_converts_python_scalars():
+    """A map.pkl pickled before get_map_soln was changed to preserve free
+    parameter shapes can still hold plain Python floats for scalar sites.
+    numpyro's init_to_value substitutes them verbatim, and get_rv then calls
+    .squeeze() on the result. Anything handed to init_to_value must therefore
+    be an array.
+    """
+    from timex import model
+
+    out = model._as_init_arrays({
+        't0': 0.05,                       # plain float, as a legacy map.pkl might hold
+        'ror': np.array([0.1]),           # already an array
+        'u_star_g': np.array([0.4, 0.2]),
+    })
+    for key, value in out.items():
+        assert hasattr(value, 'squeeze'), f'{key} is not array-like: {type(value)}'
+    assert out['t0'].squeeze().shape == ()
+    assert out['u_star_g'].shape == (2,)
+
+
+def test_as_init_arrays_leaves_values_unchanged_numerically():
+    from timex import model
+
+    out = model._as_init_arrays({'t0': 0.05, 'ror': np.array([0.1])})
+    assert float(out['t0']) == 0.05
+    assert float(out['ror'][0]) == 0.1

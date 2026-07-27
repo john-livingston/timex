@@ -90,3 +90,67 @@ def test_returns_none_and_warns_above_max_points(caplog):
     assert 'max_points=10' in caplog.text
     assert 'dataset g' in caplog.text
     assert str(len(data['g']['x'])) in caplog.text
+
+
+def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
+    """compute_gp_edf runs inside save_results' `with open(ic.txt)` block and
+    reads GP hyperparameters back out of map_soln. If it raises (e.g. a
+    force-loaded map.pkl whose gp.per_dataset no longer matches the current
+    config, so _build_gp looks up the wrong gp_log_amp key), that must not
+    truncate ic.txt to nothing and must not skip save_posterior_samples /
+    save_corrected, which run after the `with` block.
+    """
+    import logging
+    from timex import fit
+
+    # a TransitFit carrying only what save_results reads; same construction
+    # shortcut as test_resume.py::_bare_fit and
+    # test_fit_defaults.py::test_get_ic_counts_only_unmasked_points
+    tf = fit.TransitFit.__new__(fit.TransitFit)
+    tf.outdir = str(tmp_path)
+    tf.planets = 'b'
+    tf.ref_time = 0.0
+    tf.priors = {'t0': 0.1}
+    tf.use_gp = True
+    tf.map_soln = {'gp_log_amp': np.array(1.0)}
+    tf.data = {}
+    tf.masks = {}
+    tf.gp_config = None
+
+    class _FakeStacked:
+        data_vars = {}  # no 't0' entry -> save_results takes the fixed-t0 branch
+
+    class _FakePosterior:
+        def stack(self, **kwargs):
+            return _FakeStacked()
+
+    class _FakeTrace:
+        posterior = _FakePosterior()
+
+    tf.trace = _FakeTrace()
+
+    monkeypatch.setattr(fit.util, 'get_map_soln', lambda trace: ({}, -1.0))
+    monkeypatch.setattr(fit.TransitFit, '_count_params', lambda self: 3)
+    monkeypatch.setattr(fit.TransitFit, '_count_data', lambda self: 50)
+
+    def _raise_stale_hyperparam_lookup(*args, **kwargs):
+        raise KeyError('gp_log_amp')
+
+    monkeypatch.setattr(fit.model, 'compute_gp_edf', _raise_stale_hyperparam_lookup)
+
+    calls = []
+    monkeypatch.setattr(fit.TransitFit, 'save_posterior_samples',
+                        lambda self: calls.append('posterior'))
+    monkeypatch.setattr(fit.TransitFit, 'save_corrected',
+                        lambda self: calls.append('corrected'))
+
+    with caplog.at_level(logging.WARNING):
+        tf.save_results()
+
+    ic_text = (tmp_path / 'ic.txt').read_text()
+    assert 'BIC' in ic_text, 'the three uncorrected rows must survive an edf failure'
+    assert 'edf' not in ic_text, 'a failed edf computation must not write corrected rows'
+    assert calls == ['posterior', 'corrected'], (
+        'save_posterior_samples/save_corrected must still run after an edf failure'
+    )
+    assert 'KeyError' in caplog.text, 'the warning must name the exception'

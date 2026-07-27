@@ -137,6 +137,21 @@ def test_get_corrected_removes_flare_and_bump(map_soln):
     assert np.allclose(baseline['y'] - corrected['y'], 2.0)
 
 
+def test_get_corrected_sums_the_high_resolution_planet_axis(map_soln_multiplanet):
+    """tra_mod_hr is what the model curve is drawn from, so a two planet fit
+    must plot both transits, and t0 is per planet once nplanets > 1."""
+    data = _corrected_data()
+
+    cor = util.get_corrected(data, 'g', map_soln_multiplanet, 2, subtract_tc=False)
+    assert cor['tra_mod_hr'].shape == (500,)
+    # either planet alone would give -1.0 or -0.25
+    assert np.allclose(cor['tra_mod_hr'], -1.25)
+
+    shifted = util.get_corrected(data, 'g', map_soln_multiplanet, 2, subtract_tc=True)
+    # the first planet's t0, not the whole (2,) vector
+    assert np.allclose(shifted['x'], data['x'] - 0.05)
+
+
 def test_get_corrected_without_linear_model(map_soln):
     del map_soln['g_lm']
     data = _corrected_data()
@@ -164,6 +179,39 @@ def test_get_residuals_subtracts_all_components(map_soln):
     # transit -1.0, mean 0.1, lm 0.2, gp 0.4 -> resid = 0 - (-1.0) - 0.7
     resid = util.get_residuals('g', y, map_soln)
     assert np.allclose(resid, 0.3)
+
+
+def test_get_residuals_sums_over_the_planet_axis(map_soln_multiplanet):
+    """Two planets keep a planet axis that has to be summed, not indexed."""
+    soln = map_soln_multiplanet
+    soln['g_gp_pred'] = np.full(100, 0.4)
+    y = np.zeros(100)
+    # transits -1.0 and -0.25, mean 0.1, lm 0.2, gp 0.4
+    resid = util.get_residuals('g', y, soln)
+    # either planet alone would give 0.30 or 1.05
+    assert np.allclose(resid, 0.55)
+
+
+def test_get_outlier_mask_sums_over_the_planet_axis(map_soln_multiplanet):
+    """An outlier is only detectable against the full transit model.
+
+    y follows mean + both transits + lm plus a small alternating scatter, with
+    one deliberate spike. Dropping the second planet leaves a 0.25 offset that
+    inflates the robust rms fivefold, and the spike then falls inside the
+    threshold and is kept.
+    """
+    n = 100
+    soln = map_soln_multiplanet
+    mod = 0.1 + (-1.0) + (-0.25) + 0.2   # mean + both transits + lm
+    resid = np.where(np.arange(n) % 2 == 0, 0.05, -0.05)
+    resid[10] = 1.0
+    y = mod + resid
+    x = np.linspace(0.0, 0.1, n)
+
+    mask = util.get_outlier_mask(x, y, 'g', soln, use_gp=False)
+
+    assert not mask[10], 'the injected outlier was not clipped'
+    assert mask.sum() == n - 1, 'only the injected outlier may be clipped'
 
 
 def test_get_var_names_omits_fixed_t0():

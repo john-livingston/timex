@@ -64,6 +64,29 @@ def test_add_gp_predictions_missing_mean_matches_explicit_zero(map_soln):
     assert not np.allclose(a['g_gp_pred'], c['g_gp_pred'])
 
 
+def test_add_gp_predictions_sums_over_the_planet_axis(map_soln_multiplanet):
+    """The GP is conditioned on residuals, so an unsubtracted second transit
+    would be absorbed into the GP prediction instead of the transit model."""
+    datasets, masks = _gp_inputs()
+    soln = dict(map_soln_multiplanet)
+    soln['gp_log_amp'] = np.array(-1.0)
+    soln['gp_log_scale'] = np.array(-2.0)
+
+    presummed = dict(soln)
+    presummed['g_light_curves'] = soln['g_light_curves'].sum(axis=-1)
+    first_only = dict(soln)
+    first_only['g_light_curves'] = soln['g_light_curves'][:, 0]
+
+    out = model._add_gp_predictions(dict(soln), datasets, masks, gp_config=None)
+    reference = model._add_gp_predictions(presummed, datasets, masks, gp_config=None)
+    wrong = model._add_gp_predictions(first_only, datasets, masks, gp_config=None)
+
+    assert out['g_gp_pred'].shape == (100,)
+    assert np.allclose(out['g_gp_pred'], reference['g_gp_pred'])
+    # and the comparison is not vacuous: dropping a planet does change it
+    assert not np.allclose(out['g_gp_pred'], wrong['g_gp_pred'])
+
+
 def test_as_init_arrays_converts_python_scalars():
     """A map.pkl pickled before get_map_soln was changed to preserve free
     parameter shapes can still hold plain Python floats for scalar sites.

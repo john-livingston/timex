@@ -40,7 +40,12 @@ def synthetic_lc_aux(tmp_path):
 
 @pytest.fixture
 def map_soln():
-    """A minimal MAP solution dict: one dataset named 'g', 100 points, 1 planet."""
+    """A minimal MAP solution dict: one dataset named 'g', 100 points, 1 planet.
+
+    Shapes match what util.get_map_soln actually produces: entries ending in a
+    DERIVED_SUFFIXES entry are squeezed, so a single planet's light curves are
+    (n,) and not (n, 1). Free parameters keep their site shape.
+    """
     n = 100
     return {
         't0': np.array(0.05),
@@ -52,7 +57,34 @@ def map_soln():
         'g_mean': np.array(0.1),
         'g_log_sigma_lc': np.array(-1.0),
         'g_lm': np.full(n, 0.2),
-        'g_light_curves': np.full((n, 1), -1.0),
-        'g_light_curves_hr': np.full((500, 1), -1.0),
+        'g_light_curves': np.full(n, -1.0),
+        'g_light_curves_hr': np.full(500, -1.0),
         'g_lc_pred': np.full(n, -1.0),
+    }
+
+
+@pytest.fixture
+def map_soln_multiplanet():
+    """The same dataset fitted with two planets, so the light curves stay 2-D.
+
+    Squeezing cannot flatten a genuine planet axis, so this is the shape that
+    reaches the `lcs.ndim > 1` branches in util.get_residuals,
+    util.get_outlier_mask, util.get_corrected and model._add_gp_predictions.
+    The two planets have different depths, so summing over the planet axis is
+    distinguishable from picking either column.
+    """
+    n = 100
+    return {
+        't0': np.array([0.05, 0.06]),
+        'period': np.array([3.0, 7.0]),
+        'ror': np.array([0.05, 0.03]),
+        'b': np.array([0.3, 0.1]),
+        'dur': np.array([0.1, 0.15]),
+        'u_star_g': np.array([0.4, 0.2]),
+        'g_mean': np.array(0.1),
+        'g_log_sigma_lc': np.array(-1.0),
+        'g_lm': np.full(n, 0.2),
+        'g_light_curves': np.column_stack([np.full(n, -1.0), np.full(n, -0.25)]),
+        'g_light_curves_hr': np.column_stack([np.full(500, -1.0), np.full(500, -0.25)]),
+        'g_lc_pred': np.full(n, -1.25),
     }

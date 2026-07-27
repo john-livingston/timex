@@ -11,10 +11,17 @@ def _tiny_model():
     numpyro.sample('obs', dist.Normal(x, 1.0), obs=np.array(0.5))
 
 
-def test_optimize_returns_constrained_params():
+def test_optimize_finds_the_closed_form_map():
+    """Pinned against the answer derived by hand, not against the code.
+
+    A Normal(0,1) prior on x with one observation of 0.5 under Normal(x,1)
+    gives a Gaussian posterior with mean (0*1 + 0.5*1)/(1+1) = 0.25, so the
+    MAP is exactly 0.25. Asserting only that 'x' is present and finite passes
+    even when optimize() returns the unoptimized initial point, which is the
+    one failure this module exists to prevent.
+    """
     result = optim.optimize(_tiny_model, verbose=False, progress=False)
-    assert 'x' in result
-    assert np.isfinite(result['x'])
+    assert result['x'] == pytest.approx(0.25, abs=1e-3)
 
 
 def test_optimize_propagates_keyboard_interrupt(monkeypatch):

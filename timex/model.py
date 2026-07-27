@@ -446,28 +446,45 @@ def build(
     return model_fn, map_soln
 
 
+def _build_gp(map_soln, name, x, yerr, gp_config):
+    """A computed celerite2 GP and its noise diagonal, from MAP hyperparameters.
+
+    Uses the numpy celerite2 backend: both callers run post-hoc, outside the
+    JAX model context. x and yerr must already be masked.
+
+    Shared so that the kernel, the log10 amplitude/scale convention, and the
+    jitter diagonal cannot drift apart between the GP prediction and the
+    effective degrees of freedom.
+    """
+    from celerite2 import GaussianProcess as C2NumpyGP, terms as c2np_terms
+
+    per_ds = gp_config.get('per_dataset', []) if gp_config else []
+    if 'log_amp' in per_ds:
+        log_amp = map_soln[f'gp_log_amp_{name}']
+    else:
+        log_amp = map_soln['gp_log_amp']
+    if 'log_scale' in per_ds:
+        log_scale = map_soln[f'gp_log_scale_{name}']
+    else:
+        log_scale = map_soln['gp_log_scale']
+
+    amp = float(10**np.squeeze(log_amp))
+    scale = float(10**np.squeeze(log_scale))
+    log_sigma_lc = float(np.squeeze(map_soln[f'{name}_log_sigma_lc']))
+    diag = np.exp(2*log_sigma_lc) + yerr**2
+
+    gp = C2NumpyGP(c2np_terms.Matern32Term(sigma=amp, rho=scale))
+    gp.compute(x, diag=diag)
+    return gp, diag
+
+
 def _add_gp_predictions(map_soln, datasets, masks, gp_config):
     """Compute GP conditional mean from MAP params and add to map_soln."""
-    per_ds = gp_config.get('per_dataset', []) if gp_config else []
     for name, data in datasets.items():
         x, y, yerr = data['x'], data['y'], data['yerr']
         mask = masks[name]
         if mask is None:
             mask = np.ones(len(x), dtype=bool)
-
-        # Reconstruct kernel from MAP params
-        if 'log_amp' in per_ds:
-            log_amp = map_soln[f'gp_log_amp_{name}']
-        else:
-            log_amp = map_soln['gp_log_amp']
-        if 'log_scale' in per_ds:
-            log_scale = map_soln[f'gp_log_scale_{name}']
-        else:
-            log_scale = map_soln['gp_log_scale']
-
-        amp = float(10**np.squeeze(log_amp))
-        scale = float(10**np.squeeze(log_scale))
-        kernel = celerite_terms.Matern32Term(sigma=amp, rho=scale)
 
         # Residuals = data - deterministic model
         # Squeeze all values to remove trailing singleton dims from numpyro trace
@@ -489,14 +506,8 @@ def _add_gp_predictions(map_soln, datasets, masks, gp_config):
             light_curve = light_curve + np.squeeze(map_soln[f'{name}_bump'])
 
         residuals = y[mask] - light_curve
-        log_sigma_lc = float(np.squeeze(map_soln[f'{name}_log_sigma_lc']))
-        diag = np.exp(2*log_sigma_lc) + yerr[mask]**2
 
-        # Use celerite2 numpy for prediction (outside JAX model context)
-        from celerite2 import GaussianProcess as C2NumpyGP, terms as c2np_terms
-        kernel_np = c2np_terms.Matern32Term(sigma=amp, rho=scale)
-        gp = C2NumpyGP(kernel_np)
-        gp.compute(x[mask], diag=diag)
+        gp, _ = _build_gp(map_soln, name, x[mask], yerr[mask], gp_config)
         map_soln[f'{name}_gp_pred'] = gp.predict(residuals)
 
     return map_soln

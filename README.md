@@ -1,5 +1,7 @@
 # timex
 
+![CI](https://github.com/john-livingston/timex/actions/workflows/ci.yml/badge.svg)
+
 Transit timing estimator in Jax, a Python package for robust, efficient, and flexible Bayesian analysis of individual exoplanet transit events.
 
 Documentation: [john-livingston.github.io/timex](https://john-livingston.github.io/timex)

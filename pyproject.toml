@@ -7,7 +7,7 @@ name = "timex"
 version = "0.2.0"
 description = "Transit fitting analysis package"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 authors = [
     {name = "John Livingston", email = "john.livingston@nao.ac.jp"},
 ]
@@ -48,6 +48,14 @@ dev = [
     "pytest",
     "black",
     "flake8",
+]
+test = [
+    "pytest",
+]
+docs = [
+    "mkdocs",
+    "mkdocs-material",
+    "pymdown-extensions",
 ]
 
 [project.scripts]

@@ -7,7 +7,7 @@ name = "timex"
 version = "0.2.0"
 description = "Transit fitting analysis package"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     {name = "John Livingston", email = "john.livingston@nao.ac.jp"},
 ]

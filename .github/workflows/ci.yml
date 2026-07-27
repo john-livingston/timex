@@ -11,7 +11,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.12']
+        # 3.11 is the floor: celerite2 builds against jax==0.8.0, which needs
+        # >=3.11. The two legs also straddle a dependency boundary, since 3.11
+        # resolves to jax 0.10.x while 3.12 gets 0.11+. Development happens on
+        # 3.13, which shares 3.12's jax line.
+        python-version: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

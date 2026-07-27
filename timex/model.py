@@ -478,6 +478,48 @@ def _build_gp(map_soln, name, x, yerr, gp_config):
     return gp, diag
 
 
+def compute_gp_edf(map_soln, datasets, masks, gp_config, max_points=5000):
+    """Effective degrees of freedom the GP absorbs, per dataset.
+
+    A GP posterior mean is the linear smoother y_hat = K (K+S)^-1 y, and its
+    effective degrees of freedom is the trace of that smoother. Counting the
+    GP as its handful of hyperparameters understates it badly: on a real fit
+    a GP charged for 5 hyperparameters absorbed about 110 degrees of freedom
+    out of 560 points.
+
+    Computed as n - tr(S (K+S)^-1), which needs only the diagonal of the
+    inverse: n solves, each O(n), so O(n^2) overall.
+
+    Returns {dataset_name: edf}, or None if any dataset exceeds max_points,
+    since the cost is prohibitive at survey scale. Returning None rather than
+    a partial sum keeps the caller from reporting a number that omits a
+    dataset.
+    """
+    for name, data in datasets.items():
+        mask = masks[name]
+        n = len(data['x']) if mask is None else int(np.sum(mask))
+        if n > max_points:
+            logging.warning(
+                f'skipping GP effective degrees of freedom: dataset {name} has '
+                f'{n} points, above max_points={max_points}; the calculation is '
+                'quadratic in the number of points'
+            )
+            return None
+
+    edf = {}
+    for name, data in datasets.items():
+        x, yerr = data['x'], data['yerr']
+        mask = masks[name]
+        if mask is None:
+            mask = np.ones(len(x), dtype=bool)
+        gp, diag = _build_gp(map_soln, name, x[mask], yerr[mask], gp_config)
+        n = int(np.sum(mask))
+        basis = np.eye(n)
+        inv_diag = np.array([gp.apply_inverse(basis[:, i])[i] for i in range(n)])
+        edf[name] = float(n - np.sum(diag * inv_diag))
+    return edf
+
+
 def _add_gp_predictions(map_soln, datasets, masks, gp_config):
     """Compute GP conditional mean from MAP params and add to map_soln."""
     for name, data in datasets.items():

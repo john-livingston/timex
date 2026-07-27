@@ -123,3 +123,44 @@ def test_gp_ic_excludes_gp_predictions(tmp_path):
         f'nparams {nparams} is inflated toward ndata {ndata}: '
         'gp predictions are being counted as free parameters'
     )
+
+
+def _read_ic(outdir):
+    return {line.split()[0]: float(line.split()[1])
+            for line in open(outdir / 'ic.txt')}
+
+
+@pytest.mark.slow
+def test_gp_fit_reports_edf_corrected_ic(tmp_path):
+    """The GP is charged for a handful of hyperparameters but absorbs far more
+    degrees of freedom, so the corrected criteria must be reported alongside."""
+    wd, fit_params, sys_params = _setup(tmp_path, 'gp_edf', _use_gp)
+    tf = _run(wd, fit_params, sys_params)
+    tf.save_results()
+
+    ic = _read_ic(wd / 'out')
+    ndata = sum(int(tf.masks[n].sum()) if tf.masks[n] is not None else len(d['x'])
+                for n, d in tf.data.items())
+
+    for key in ('BIC', 'AIC', 'AICc', 'edf', 'nparams', 'nparams_edf',
+                'BIC_edf', 'AIC_edf', 'AICc_edf'):
+        assert key in ic, f'{key} missing from ic.txt'
+
+    assert 0 < ic['edf'] < ndata
+    assert ic['nparams_edf'] > ic['nparams'], (
+        'the GP absorbs more degrees of freedom than its hyperparameter count'
+    )
+    # the correction only ever penalises, so the corrected BIC cannot be lower
+    assert ic['BIC_edf'] > ic['BIC']
+
+
+@pytest.mark.slow
+def test_non_gp_fit_reports_no_edf_rows(tmp_path):
+    wd, fit_params, sys_params = _setup(tmp_path, 'no_edf', lambda p: None)
+    tf = _run(wd, fit_params, sys_params)
+    tf.save_results()
+
+    ic = _read_ic(wd / 'out')
+    assert 'BIC' in ic
+    for key in ('edf', 'nparams_edf', 'BIC_edf', 'AIC_edf', 'AICc_edf'):
+        assert key not in ic, f'{key} should not appear for a non-GP fit'

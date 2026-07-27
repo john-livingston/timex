@@ -67,7 +67,7 @@ All outputs are saved to the `out/` directory (or custom `--outdir`):
 | `trace.png` | MCMC trace plot |
 | `summary.csv` | Parameter summary statistics |
 | `tc.txt` | Fitted transit center times |
-| `ic.txt` | Information criteria (BIC, AIC, AICc) |
+| `ic.txt` | Information criteria (BIC, AIC, AICc); for GP fits also the effective-degrees-of-freedom corrected values |
 | `posterior_samples.csv.gz` | Full posterior samples |
 | `*-cor.csv` | Corrected (detrended) light curves |
 | `timex.log` | Full log file |

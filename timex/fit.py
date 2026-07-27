@@ -770,11 +770,29 @@ class TransitFit:
         with open(os.path.join(self.outdir, 'ic.txt'), 'w') as f:
             soln, max_logp = util.get_map_soln(self.trace)
             nparams = self._count_params()
-            ndata = sum([len(v['x']) for v in self.data.values()])
+            ndata = self._count_data()
             ics = 'BIC AIC AICc'.split()
             for ic in ics:
                 val = util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=False)
                 f.write(f'{ic} {val:.2f}\n')
+
+            # a GP is charged for its hyperparameters but absorbs far more
+            # degrees of freedom, so report a corrected count alongside
+            edf_by_dataset = None
+            if self.use_gp:
+                edf_by_dataset = model.compute_gp_edf(
+                    self.map_soln, self.data, self.masks, self.gp_config)
+            if edf_by_dataset is not None:
+                edf = sum(edf_by_dataset.values())
+                n_gp_hyper = sum(1 for k in self.map_soln if k.startswith('gp_log_'))
+                nparams_edf = nparams - n_gp_hyper + edf
+                f.write(f'edf {edf:.2f}\n')
+                f.write(f'nparams {nparams}\n')
+                f.write(f'nparams_edf {nparams_edf:.2f}\n')
+                for ic in ics:
+                    val = util.compute_ic(soln, max_logp, nparams_edf, ndata,
+                                          method=ic, verbose=False)
+                    f.write(f'{ic}_edf {val:.2f}\n')
         self.save_posterior_samples()
         self.save_corrected()
 

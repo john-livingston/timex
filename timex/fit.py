@@ -417,6 +417,13 @@ class TransitFit:
             logging.info('reusing cached MAP solution; rebuilding model function')
         else:
             logging.info('building and optimizing model')
+            # drop the entry as soon as we commit to recomputing, not at the
+            # write below. The optimize step is the one a Ctrl-C, an OOM or a
+            # scheduler timeout lands in, and clip_outliers has by then already
+            # recorded a mask that the map.pkl on disk predates. Both would keep
+            # reading as valid under the same model key, which cannot tell a
+            # pre-clip MAP from a post-clip one.
+            cache.drop_entry(self.outdir, 'map.pkl')
         data, priors, masks = self.data, self.priors, self.masks
         nplanets, use_gp, chromatic = self.nplanets, self.use_gp, self.chromatic
         fixed, fit_basis = self.fixed, self.fit_basis
@@ -432,7 +439,6 @@ class TransitFit:
         if not reuse_map:
             self.map_soln = map_soln
             logging.info("Model built successfully")
-            cache.drop_entry(self.outdir, 'map.pkl')
             pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
             if 'map.pkl' not in self._stale_force_loaded:
                 cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
@@ -562,6 +568,11 @@ class TransitFit:
             chains = self.chains
             cores = self.cores
             logging.info(f'sampling for {tune} tuning steps and {draws} draws with {chains} chains on {cores} cores')
+            # as in build_model, drop the entry when we commit to recomputing
+            # rather than at the write. MCMC is the step that runs for hours, so
+            # it is the one that gets interrupted, and under clobber the mask it
+            # will be sampled against has already been recomputed.
+            cache.drop_entry(self.outdir, 'trace.nc')
             mcmc = model.sample(
                 self.model_fn,
                 self.map_soln,
@@ -571,7 +582,6 @@ class TransitFit:
                 cores=cores
             )
             self.trace = az.from_numpyro(mcmc)
-            cache.drop_entry(self.outdir, 'trace.nc')
             self.trace.to_netcdf(os.path.join(self.outdir, 'trace.nc'))
             if 'trace.nc' not in self._stale_force_loaded:
                 cache.write_manifest(self.outdir, 'trace.nc', self._cache_keys['run'])

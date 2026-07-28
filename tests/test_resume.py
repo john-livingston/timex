@@ -51,6 +51,23 @@ def _stub_build(monkeypatch, captured):
     monkeypatch.setattr(fit.model, 'build', fake_build)
 
 
+def _add_clippable_dataset(tf, name='g'):
+    """Give a bare fit one dataset holding exactly one 7-sigma outlier.
+
+    The clipping itself stays real: util.get_outlier_mask is plain numpy over
+    y minus the model, so nineteen points at 1e-3 set rms=1e-3 and the single
+    point at 1.0 is the only one beyond 7 rms.
+    """
+    n = 20
+    y = np.full(n, 1e-3)
+    y[-1] = 1.0
+    tf.data[name] = dict(x=np.arange(n, dtype=float), y=y)
+    tf.masks[name] = None
+    tf.map_soln[f'{name}_light_curves'] = np.zeros(n)
+    tf.fit_params = {'data': {name: dict(clip=True, clip_nsig=7)}}
+    return tf
+
+
 def test_build_model_does_not_reuse_a_stale_force_loaded_map(tmp_path, monkeypatch):
     """A map.pkl force-loaded past a key mismatch belongs to another config.
 
@@ -88,6 +105,75 @@ def test_build_model_still_reuses_a_matching_cached_map(tmp_path, monkeypatch):
     assert 'cached' in tf.map_soln
     assert cache.read_manifest(str(tmp_path)) is None, (
         'reusing a cached MAP writes nothing, so there is nothing to record'
+    )
+
+
+def test_a_refit_that_dies_leaves_no_entry_vouching_for_the_stale_map(tmp_path, monkeypatch):
+    """clip_outliers records the new mask, then the refit on it never finishes.
+
+    Ctrl-C in the optimizer is a deliberate live exit path; an OOM or a
+    scheduler timeout does the same. Nothing distinguishes the pre-clip MAP
+    from the post-clip one by key, so if map.pkl's entry survives the
+    interrupted rebuild, mask.pkl and map.pkl both read as valid under the
+    same model key while describing different maskings. The next run then
+    loads both, skips clipping because the mask is not None, and samples a
+    likelihood that disagrees with _count_data.
+    """
+    from timex import cache, fit
+
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale=set()))
+    # the pre-clip build left a MAP recorded under the current model key
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'MODELKEY')
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fit.model, 'build', interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        tf.clip_outliers()
+
+    manifest = cache.read_manifest(str(tmp_path))
+    assert manifest['mask.pkl'] == 'MODELKEY', (
+        'setup: clip_outliers must have recorded the post-clip mask'
+    )
+    assert 'map.pkl' not in manifest, (
+        'map.pkl still vouches for the pre-clip masking under the same key '
+        'as the post-clip mask.pkl'
+    )
+
+
+def test_sampling_that_dies_leaves_no_entry_vouching_for_the_previous_trace(tmp_path, monkeypatch):
+    """clobber recomputes the mask, then MCMC never finishes.
+
+    A clobber run re-optimizes, so the mask it clips can differ from the one
+    the trace on disk was sampled under. MCMC is the step that runs for hours
+    and therefore the one that gets interrupted. If trace.nc's entry survives
+    that, the next run loads the old trace against the new mask, skips MCMC,
+    and reports a summary and IC whose ndata never entered that posterior.
+    """
+    from timex import cache, fit
+
+    tf = _bare_fit(tmp_path, stale=set())
+    tf.clobber = True
+    tf.trace = None
+    tf.model_fn = object()
+    tf.tune = tf.draws = tf.chains = tf.cores = 1
+    # a finished run left a trace recorded under the current run key
+    cache.write_manifest(str(tmp_path), 'trace.nc', 'RUNKEY')
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fit.model, 'sample', interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        tf.sample(plot_fit=False, plot_systematics=False)
+
+    manifest = cache.read_manifest(str(tmp_path))
+    assert 'trace.nc' not in manifest, (
+        'the trace on disk predates this run and no longer matches the mask, '
+        'but the manifest still vouches for it'
     )
 
 

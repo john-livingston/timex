@@ -251,15 +251,15 @@ class TransitFit:
         records the mismatch in _stale_force_loaded.
 
         For map.pkl and trace.nc, a name in _stale_force_loaded is never
-        reused as if it matched (build_model re-optimizes, sample re-runs
-        MCMC) and is never recorded in the manifest under the current key,
-        nor is anything derived from it. mask.pkl is a known exception:
-        clip_outliers gates on `self.masks[name] is None` rather than
-        consulting _stale_force_loaded, so a force-loaded stale mask is
-        silently reused for the model build and the likelihood instead of
-        being recomputed. The safe outcome for map.pkl/trace.nc is no
-        manifest entry at all, so the next ordinary run recomputes rather
-        than trusting an artifact this session only loaded because from_dir
+        reused as if it matched: build_model re-optimizes and sample re-runs
+        MCMC. mask.pkl is a known exception, since clip_outliers gates on
+        `self.masks[name] is None` rather than consulting this set, so a
+        force-loaded stale mask is reused as-is for the model build and the
+        likelihood instead of being recomputed.
+
+        Either way a non-empty set stops _may_record from vouching for
+        anything this session writes, so the next ordinary run recomputes
+        rather than trusting an artifact that only exists because from_dir
         asked for it.
         """
         if cache.is_valid(manifest, artifact, self._cache_keys[tier]):
@@ -278,6 +278,21 @@ class TransitFit:
                 )
             return True
         return False
+
+    def _may_record(self):
+        """Whether anything written this session may be vouched for in the manifest.
+
+        Any force-loaded stale artifact disqualifies every write, not only its
+        own. mask.pkl feeds model.build, the likelihood and the log_sigma_lc
+        priors, and map.pkl feeds the clipping, so an artifact derived from a
+        stale one is stale in turn and the manifest has no way to say so.
+
+        The cost is that a from_dir session which legitimately recomputes
+        records nothing, so the next ordinary run recomputes as well. That is
+        the safe direction: a wasted optimization rather than a silently
+        adopted artifact from another config.
+        """
+        return not self._stale_force_loaded
 
     def load_saved(self):
         if not os.path.exists(self.outdir):
@@ -440,7 +455,7 @@ class TransitFit:
             self.map_soln = map_soln
             logging.info("Model built successfully")
             pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-            if 'map.pkl' not in self._stale_force_loaded:
+            if self._may_record():
                 cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
         # for name in self.data.keys():
         #     fn = f'fit-{name}.png'
@@ -550,7 +565,7 @@ class TransitFit:
                         clipped = True
         cache.drop_entry(self.outdir, 'mask.pkl')
         pickle.dump(self.masks, open(os.path.join(self.outdir, 'mask.pkl'), 'wb'))
-        if 'mask.pkl' not in self._stale_force_loaded:
+        if self._may_record():
             cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
         if clipped:
             self.build_model(start=self.map_soln, force=True)
@@ -559,8 +574,8 @@ class TransitFit:
 
         # a trace.nc force-loaded despite a key mismatch was produced under a
         # different config, so it is present but unusable: sample as if it were
-        # absent, and never vouch for it or for the map.pkl derived from it
-        # below, whether or not MCMC re-ran
+        # absent. _may_record is what keeps it, and the map.pkl derived from it
+        # below, out of the manifest
         stale_trace = 'trace.nc' in self._stale_force_loaded
         if self.clobber or self.trace is None or stale_trace:
             tune = self.tune
@@ -583,7 +598,7 @@ class TransitFit:
             )
             self.trace = az.from_numpyro(mcmc)
             self.trace.to_netcdf(os.path.join(self.outdir, 'trace.nc'))
-            if 'trace.nc' not in self._stale_force_loaded:
+            if self._may_record():
                 cache.write_manifest(self.outdir, 'trace.nc', self._cache_keys['run'])
 
         self.summary = util.get_summary(
@@ -602,9 +617,7 @@ class TransitFit:
             self.map_soln = _add_gp_predictions(self.map_soln, self.data, self.masks, self.gp_config)
         cache.drop_entry(self.outdir, 'map.pkl')
         pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-        # this map.pkl is derived from the trace, so a stale trace disqualifies
-        # it even though map.pkl itself was never flagged
-        if not stale_trace and 'map.pkl' not in self._stale_force_loaded:
+        if self._may_record():
             cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
 
         if plot_fit:

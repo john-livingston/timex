@@ -51,8 +51,8 @@ def _stub_build(monkeypatch, captured):
     monkeypatch.setattr(fit.model, 'build', fake_build)
 
 
-def _add_clippable_dataset(tf, name='g'):
-    """Give a bare fit one dataset holding exactly one 7-sigma outlier.
+def _add_clippable_dataset(tf, name='g', outlier=True):
+    """Give a bare fit one dataset, holding one 7-sigma outlier or none.
 
     The clipping itself stays real: util.get_outlier_mask is plain numpy over
     y minus the model, so nineteen points at 1e-3 set rms=1e-3 and the single
@@ -60,7 +60,8 @@ def _add_clippable_dataset(tf, name='g'):
     """
     n = 20
     y = np.full(n, 1e-3)
-    y[-1] = 1.0
+    if outlier:
+        y[-1] = 1.0
     tf.data[name] = dict(x=np.arange(n, dtype=float), y=y)
     tf.masks[name] = None
     tf.map_soln[f'{name}_light_curves'] = np.zeros(n)
@@ -105,6 +106,50 @@ def test_build_model_still_reuses_a_matching_cached_map(tmp_path, monkeypatch):
     assert 'cached' in tf.map_soln
     assert cache.read_manifest(str(tmp_path)) is None, (
         'reusing a cached MAP writes nothing, so there is nothing to record'
+    )
+
+
+def test_a_stale_mask_disqualifies_the_map_built_on_it(tmp_path, monkeypatch):
+    """A stale artifact taints everything downstream of it, not just itself.
+
+    mask.pkl feeds model.build, the likelihood and the log_sigma_lc priors, so
+    a MAP optimized against a mask the current config no longer produces is no
+    more trustworthy than a stale map.pkl. This is what a deleted map.pkl, or
+    a run that died before writing one, leaves behind.
+    """
+    from timex import cache, fit
+
+    captured = {}
+    _stub_build(monkeypatch, captured)
+    tf = _bare_fit(tmp_path, stale={'mask.pkl'})
+    del tf.map_soln    # map.pkl absent, so this build really does optimize
+
+    tf.build_model(plot=False)
+
+    assert captured['optimize'] is True, 'setup: the MAP must actually be recomputed'
+    manifest = cache.read_manifest(str(tmp_path)) or {}
+    assert 'map.pkl' not in manifest, (
+        'a MAP optimized against a stale mask was recorded under the current key'
+    )
+
+
+def test_a_stale_map_disqualifies_the_mask_clipped_with_it(tmp_path):
+    """The same property in the other direction.
+
+    get_outlier_mask subtracts the MAP model from the data, so a mask clipped
+    with a stale MAP describes the wrong outliers. Recording it tells the next
+    ordinary run that clipping is already settled, and the outliers the right
+    MAP would have found are never looked for.
+    """
+    from timex import cache, fit
+
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale={'map.pkl'}), outlier=False)
+
+    tf.clip_outliers()
+
+    manifest = cache.read_manifest(str(tmp_path)) or {}
+    assert 'mask.pkl' not in manifest, (
+        'a mask clipped with a stale MAP was recorded under the current key'
     )
 
 

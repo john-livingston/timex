@@ -1,5 +1,6 @@
 import logging
 import os
+import pickle
 import shutil
 
 import numpy as np
@@ -51,6 +52,24 @@ def _stub_build(monkeypatch, captured):
     monkeypatch.setattr(fit.model, 'build', fake_build)
 
 
+def _add_clippable_dataset(tf, name='g', outlier=True):
+    """Give a bare fit one dataset, holding one 7-sigma outlier or none.
+
+    The clipping itself stays real: util.get_outlier_mask is plain numpy over
+    y minus the model, so nineteen points at 1e-3 set rms=1e-3 and the single
+    point at 1.0 is the only one beyond 7 rms.
+    """
+    n = 20
+    y = np.full(n, 1e-3)
+    if outlier:
+        y[-1] = 1.0
+    tf.data[name] = dict(x=np.arange(n, dtype=float), y=y)
+    tf.masks[name] = None
+    tf.map_soln[f'{name}_light_curves'] = np.zeros(n)
+    tf.fit_params = {'data': {name: dict(clip=True, clip_nsig=7)}}
+    return tf
+
+
 def test_build_model_does_not_reuse_a_stale_force_loaded_map(tmp_path, monkeypatch):
     """A map.pkl force-loaded past a key mismatch belongs to another config.
 
@@ -88,6 +107,347 @@ def test_build_model_still_reuses_a_matching_cached_map(tmp_path, monkeypatch):
     assert 'cached' in tf.map_soln
     assert cache.read_manifest(str(tmp_path)) is None, (
         'reusing a cached MAP writes nothing, so there is nothing to record'
+    )
+
+
+def _bare_loader(tmp_path, lengths):
+    """A TransitFit carrying only what load_saved reads, paused after load_data.
+
+    `lengths` maps each dataset named in fit.yaml to the number of points
+    load_data produced for it; load_data leaves every mask entry None, and
+    that skeleton is what mask.pkl has to be merged into. _force_load_saved
+    is set because a mask.pkl that disagrees with fit.yaml is by definition a
+    key mismatch, so from_dir is the only way to reach the merge at all.
+    """
+    from timex import fit
+
+    (tmp_path / 'a.csv').write_text('time,flux,fluxerr\n1.0,1.0,0.001\n')
+    tf = fit.TransitFit.__new__(fit.TransitFit)
+    tf.wd = str(tmp_path)
+    tf.outdir = str(tmp_path / 'out')
+    os.makedirs(tf.outdir)
+    tf.clobber = False
+    tf._force_load_saved = True
+    tf.fit_params = {'data': {n: dict(file='a.csv', band='g') for n in lengths}}
+    tf.sys_params = {}
+    tf.data = {n: dict(x=np.zeros(k)) for n, k in lengths.items()}
+    tf.masks = {n: None for n in lengths}
+    return tf
+
+
+def _save_masks(tf, masks):
+    with open(os.path.join(tf.outdir, 'mask.pkl'), 'wb') as f:
+        pickle.dump(masks, f)
+
+
+def test_load_saved_keeps_an_empty_mask_slot_for_a_dataset_added_since(tmp_path):
+    """A mask.pkl written before a dataset was added knows nothing about it.
+
+    Replacing the whole dict with the pickled one throws away the skeleton
+    load_data built, and clip_outliers then reads self.masks[name] for a
+    dataset that is not in it.
+    """
+    tf = _bare_loader(tmp_path, {'g': 20, 'r': 20})
+    _save_masks(tf, {'g': np.ones(20, dtype=bool)})
+
+    tf.load_saved()
+
+    assert tf.masks['g'] is not None, 'setup: the saved mask must actually load'
+    assert tf.masks['r'] is None, (
+        'the dataset added since has no mask slot, so clip_outliers raises KeyError'
+    )
+
+
+def test_load_saved_ignores_a_mask_for_a_dataset_no_longer_in_the_config(tmp_path):
+    """The mirror of adding one: the dataset it belongs to is gone.
+
+    There is no self.data entry to size it against, and nothing downstream
+    would ever read it.
+    """
+    tf = _bare_loader(tmp_path, {'g': 20})
+    _save_masks(tf, {'g': np.ones(20, dtype=bool), 'r': np.ones(30, dtype=bool)})
+
+    tf.load_saved()
+
+    assert set(tf.masks) == {'g'}, 'a dataset dropped from the config came back'
+
+
+def test_load_saved_drops_a_mask_that_no_longer_matches_its_dataset_length(tmp_path):
+    """A binsize or trim edit changes how many points a dataset has.
+
+    The mask is positional, so one written for the old binning selects the
+    wrong points rather than failing. Dropping it recomputes instead.
+    """
+    tf = _bare_loader(tmp_path, {'g': 8})
+    _save_masks(tf, {'g': np.ones(10, dtype=bool)})
+
+    tf.load_saved()
+
+    assert tf.masks['g'] is None, 'a mask of 10 points was kept for 8 points of data'
+
+
+def test_a_stale_mask_disqualifies_the_map_built_on_it(tmp_path, monkeypatch):
+    """A stale artifact taints everything downstream of it, not just itself.
+
+    mask.pkl feeds model.build, the likelihood and the log_sigma_lc priors, so
+    a MAP optimized against a mask the current config no longer produces is no
+    more trustworthy than a stale map.pkl. This is what a deleted map.pkl, or
+    a run that died before writing one, leaves behind.
+    """
+    from timex import cache, fit
+
+    captured = {}
+    _stub_build(monkeypatch, captured)
+    tf = _bare_fit(tmp_path, stale={'mask.pkl'})
+    del tf.map_soln    # map.pkl absent, so this build really does optimize
+
+    tf.build_model(plot=False)
+
+    assert captured['optimize'] is True, 'setup: the MAP must actually be recomputed'
+    manifest = cache.read_manifest(str(tmp_path)) or {}
+    assert 'map.pkl' not in manifest, (
+        'a MAP optimized against a stale mask was recorded under the current key'
+    )
+
+
+def test_a_stale_map_disqualifies_the_mask_clipped_with_it(tmp_path):
+    """The same property in the other direction.
+
+    get_outlier_mask subtracts the MAP model from the data, so a mask clipped
+    with a stale MAP describes the wrong outliers. Recording it tells the next
+    ordinary run that clipping is already settled, and the outliers the right
+    MAP would have found are never looked for.
+    """
+    from timex import cache, fit
+
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale={'map.pkl'}), outlier=False)
+
+    tf.clip_outliers()
+
+    manifest = cache.read_manifest(str(tmp_path)) or {}
+    assert 'mask.pkl' not in manifest, (
+        'a mask clipped with a stale MAP was recorded under the current key'
+    )
+
+
+def test_a_refit_that_dies_leaves_no_entry_vouching_for_the_stale_map(tmp_path, monkeypatch):
+    """clip_outliers records the new mask, then the refit on it never finishes.
+
+    Ctrl-C in the optimizer is a deliberate live exit path; an OOM or a
+    scheduler timeout does the same. Nothing distinguishes the pre-clip MAP
+    from the post-clip one by key, so if map.pkl's entry survives the
+    interrupted rebuild, mask.pkl and map.pkl both read as valid under the
+    same model key while describing different maskings. The next run then
+    loads both, skips clipping because the mask is not None, and samples a
+    likelihood that disagrees with _count_data.
+    """
+    from timex import cache, fit
+
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale=set()))
+    # the pre-clip build left a MAP recorded under the current model key
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'MODELKEY')
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fit.model, 'build', interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        tf.clip_outliers()
+
+    manifest = cache.read_manifest(str(tmp_path))
+    assert manifest['mask.pkl'] == 'MODELKEY', (
+        'setup: clip_outliers must have recorded the post-clip mask'
+    )
+    assert 'map.pkl' not in manifest, (
+        'map.pkl still vouches for the pre-clip masking under the same key '
+        'as the post-clip mask.pkl'
+    )
+
+
+def test_clip_outliers_leaves_the_mask_entry_alone_when_nothing_was_reclipped(tmp_path):
+    """A warm resume loads every mask and recomputes none of them.
+
+    Dropping and rewriting the entry regardless opens a window in which
+    mask.pkl is on disk with nothing vouching for it while map.pkl and
+    trace.nc keep their entries. A kill in that window, or an interrupted
+    session that never reaches the rewrite, leaves that state behind, and the
+    next run reuses map.pkl, reclips from it, and can record a mask that
+    disagrees with the map.pkl already recorded under the same model key.
+
+    A force-loaded stale trace is what stops the rewrite here, but any exit
+    between the drop and the rewrite does the same.
+    """
+    from timex import cache
+
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale={'trace.nc'}))
+    tf.masks['g'] = np.ones(20, dtype=bool)   # loaded from a matching mask.pkl
+    cache.write_manifest(str(tmp_path), 'mask.pkl', 'MODELKEY')
+
+    tf.clip_outliers()
+
+    manifest = cache.read_manifest(str(tmp_path))
+    assert manifest.get('mask.pkl') == 'MODELKEY', (
+        'the mask on disk is unchanged, so its entry must be too'
+    )
+    assert not os.path.exists(os.path.join(tmp_path, 'mask.pkl')), (
+        'nothing was reclipped, so nothing may be rewritten'
+    )
+
+
+def test_clip_outliers_refits_when_a_reclip_stops_clipping_a_point(tmp_path, monkeypatch):
+    """The refit is owed to a masking that moved, not to a mask that excludes
+    something.
+
+    A clobber run reclips from the current MAP, which is the post-sampling best
+    draw rather than the optimizer MAP the loaded mask came from, so the new
+    mask can keep a point the old one dropped. Counting outliers calls that
+    zero and skips the refit, leaving map.pkl fitted under the old masking and
+    mask.pkl holding the new one, both recorded under the same model key.
+    """
+    from timex import fit
+
+    captured = {}
+    _stub_build(monkeypatch, captured)
+    monkeypatch.setattr(fit.TransitFit, 'plot_multi', lambda self, **kwargs: None)
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale=set()), outlier=False)
+    tf.clobber = True
+    previous = np.ones(20, dtype=bool)
+    previous[-1] = False       # the old mask clipped a point the new one keeps
+    tf.masks['g'] = previous
+
+    tf.clip_outliers()
+
+    assert tf.masks['g'].all(), 'setup: the reclip must find no outliers'
+    assert captured.get('optimize') is True, 'the model was not refitted'
+
+
+def test_clip_outliers_does_not_refit_when_the_reclip_reproduces_the_mask(tmp_path, monkeypatch):
+    """The other side of the same rule, and the reason it is not simply
+    'always refit': a clobber run that reclips to the mask it already had has
+    nothing to refit against, and the MAP it just optimized was built under
+    exactly that mask."""
+    from timex import fit
+
+    captured = {}
+    _stub_build(monkeypatch, captured)
+    monkeypatch.setattr(fit.TransitFit, 'plot_multi', lambda self, **kwargs: None)
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale=set()))
+    tf.clobber = True
+    same = np.ones(20, dtype=bool)
+    same[-1] = False           # the outlier _add_clippable_dataset planted
+    tf.masks['g'] = same
+
+    tf.clip_outliers()
+
+    assert not tf.masks['g'][-1], 'setup: the reclip must find the same outlier'
+    assert captured == {}, 'nothing changed, so nothing needed refitting'
+
+
+def test_clip_outliers_retires_the_map_entry_before_recording_the_new_mask(tmp_path, monkeypatch):
+    """Ordering, not just eventual state.
+
+    map.pkl and mask.pkl live under the same model key, and the map.pkl on
+    disk when a reclip changes the masking predates it. build_model drops its
+    entry, but only once the refit starts, so between the mask being recorded
+    and that drop both read as valid while describing different maskings.
+    """
+    from timex import cache, fit
+
+    captured = {}
+    _stub_build(monkeypatch, captured)
+    monkeypatch.setattr(fit.TransitFit, 'plot_multi', lambda self, **kwargs: None)
+    tf = _add_clippable_dataset(_bare_fit(tmp_path, stale=set()))
+    # the pre-clip build left a MAP recorded under the current model key
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'MODELKEY')
+
+    seen = {}
+    real_write = cache.write_manifest
+
+    def snapshotting_write(outdir, artifact, key):
+        seen.setdefault(artifact, cache.read_manifest(outdir) or {})
+        return real_write(outdir, artifact, key)
+
+    monkeypatch.setattr(fit.cache, 'write_manifest', snapshotting_write)
+
+    tf.clip_outliers()
+
+    assert 'mask.pkl' in seen, 'setup: the new mask must be recorded'
+    assert 'map.pkl' not in seen['mask.pkl'], (
+        'map.pkl still vouched for the pre-clip masking at the moment the '
+        'post-clip mask was recorded'
+    )
+
+
+def test_sampling_that_dies_leaves_no_entry_vouching_for_the_previous_trace(tmp_path, monkeypatch):
+    """clobber recomputes the mask, then MCMC never finishes.
+
+    A clobber run re-optimizes, so the mask it clips can differ from the one
+    the trace on disk was sampled under. MCMC is the step that runs for hours
+    and therefore the one that gets interrupted. If trace.nc's entry survives
+    that, the next run loads the old trace against the new mask, skips MCMC,
+    and reports a summary and IC whose ndata never entered that posterior.
+    """
+    from timex import cache, fit
+
+    tf = _bare_fit(tmp_path, stale=set())
+    tf.clobber = True
+    tf.trace = None
+    tf.model_fn = object()
+    tf.tune = tf.draws = tf.chains = tf.cores = 1
+    # a finished run left a trace recorded under the current run key
+    cache.write_manifest(str(tmp_path), 'trace.nc', 'RUNKEY')
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fit.model, 'sample', interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        tf.sample(plot_fit=False, plot_systematics=False)
+
+    manifest = cache.read_manifest(str(tmp_path))
+    assert 'trace.nc' not in manifest, (
+        'the trace on disk predates this run and no longer matches the mask, '
+        'but the manifest still vouches for it'
+    )
+
+
+def test_a_stale_mask_disqualifies_the_map_rederived_after_sampling(tmp_path, monkeypatch):
+    """The sample() end of the property build_model's site already has.
+
+    mask.pkl can be stale while trace.nc and map.pkl are both current: from_dir
+    force-loads the mismatched mask, clip_outliers reuses it as-is rather than
+    recomputing it, and the run tier key never moved, so MCMC is skipped
+    entirely. The map.pkl sample() then rederives from that trace is still the
+    best draw of a posterior sampled under a mask the current config does not
+    produce. Asking only whether the trace was stale, and whether map.pkl
+    itself was force-loaded, answers no to both and records it.
+    """
+    import arviz as az
+    from timex import cache, fit
+
+    tf = _bare_fit(tmp_path, stale={'mask.pkl'})
+    tf.use_gp = False
+    tf.bands = []
+    rng = np.random.default_rng(0)
+    tf.trace = az.from_dict(
+        posterior={k: rng.normal(size=(2, 40))
+                   for k in ('t0', 'period', 'b', 'dur', 'ror')},
+        sample_stats={'lp': rng.normal(size=(2, 40))},
+    )
+
+    def must_not_sample(*args, **kwargs):
+        raise AssertionError('setup: the trace is current, so MCMC must be skipped')
+
+    monkeypatch.setattr(fit.model, 'sample', must_not_sample)
+
+    tf.sample(plot_fit=False, plot_systematics=False)
+
+    manifest = cache.read_manifest(str(tmp_path)) or {}
+    assert 'map.pkl' not in manifest, (
+        'a MAP rederived from a posterior sampled under a stale mask was '
+        'recorded under the current key'
     )
 
 
@@ -235,17 +595,26 @@ def test_from_dir_clip_does_not_launder_stale_mask_under_current_key(wd, caplog)
     inspected, and clip_outliers then does not recompute it (masks[name] is
     not None). If clip_outliers went on to record it under the CURRENT model
     key, a later CLI run would silently adopt an old-config mask with no
-    warning. The safe outcome is that dropping the stale entry first, then
-    skipping the re-record, leaves no entry at all, so the next run recomputes.
+    warning. Nothing was reclipped, so the entry is left naming the key the
+    mask on disk was actually written under, which the next ordinary run sees
+    disagree with its own and recomputes from.
     """
     from timex import cache, fit
 
-    # produce a mask.pkl recorded under the ORIGINAL (matching) model key
+    # the shipped example does not clip, and the gate this test is about is
+    # the one that reads self.masks[name]
     fit_params, sys_params = _load_params(wd)
+    for spec in fit_params['data'].values():
+        spec['clip'] = True
+    _write_fit_yaml(wd, fit_params)
+
+    # a previous run under this config left a mask recorded under its model key
     tf0 = fit.TransitFit(sys_params, fit_params, wd=str(wd))
-    tf0.clip_outliers()
-    manifest = cache.read_manifest(os.path.join(wd, 'out'))
-    assert 'mask.pkl' in manifest, 'setup: clip_outliers must record mask.pkl before the edit'
+    with open(os.path.join(wd, 'out', 'mask.pkl'), 'wb') as f:
+        pickle.dump({n: np.ones(len(v['x']), dtype=bool)
+                     for n, v in tf0.data.items()}, f)
+    original_key = tf0._cache_keys['model']
+    cache.write_manifest(os.path.join(wd, 'out'), 'mask.pkl', original_key)
 
     # edit fit.yaml on disk so from_dir, which re-reads it, sees a changed config
     with open(wd / 'fit.yaml') as f:
@@ -267,7 +636,10 @@ def test_from_dir_clip_does_not_launder_stale_mask_under_current_key(wd, caplog)
         'mask.pkl was recorded under the current key despite being '
         'force-loaded from a mismatched config'
     )
-    assert 'mask.pkl' not in manifest, 'the safe outcome is no entry, so the next run recomputes'
+    assert manifest['mask.pkl'] == original_key, (
+        'nothing was reclipped, so the entry must still name the key the mask '
+        'on disk was written under, which is not the current one'
+    )
 
 
 @pytest.mark.slow
@@ -335,12 +707,17 @@ def test_from_dir_build_model_does_not_launder_stale_map_under_current_key(wd, c
 
 
 @pytest.mark.slow
-def test_from_dir_sample_does_not_launder_stale_map_when_the_trace_is_fresh(wd, caplog):
-    """Isolates the map.pkl guard at the end of sample from the trace's.
+def test_from_dir_records_nothing_once_anything_was_force_loaded_stale(wd, caplog):
+    """The accepted cost of making the rule session-wide rather than per artifact.
 
-    Removing trace.nc leaves nothing to force-load on the run tier, so MCMC
-    runs from scratch and its trace is recorded normally. Only map.pkl is
-    flagged, so it is the one artifact that must not be recorded.
+    Removing trace.nc leaves only map.pkl to force-load, and the model tier
+    edit makes build_model re-optimize from scratch, so both the MAP and the
+    trace this session produces are genuinely of the current config. Neither
+    is recorded anyway. A stale load is a fact about the session: mask.pkl in
+    particular is reused as-is rather than recomputed, so there is no general
+    way to tell which of the later writes it contaminated. The next ordinary
+    run pays for one recompute, against the alternative of adopting an
+    artifact from another config with no warning at all.
     """
     from timex import cache, fit
 
@@ -357,12 +734,14 @@ def test_from_dir_sample_does_not_launder_stale_map_when_the_trace_is_fresh(wd, 
 
     assert 'loading map.pkl anyway' in caplog.text, 'setup: the MAP must be force-loaded stale'
     assert 'loading trace' not in caplog.text, 'setup: there must be no trace to force-load'
+    assert 'sampling for' in caplog.text, 'setup: MCMC must really have run'
 
     manifest = cache.read_manifest(os.path.join(wd, 'out'))
-    assert manifest.get('trace.nc') == tf._cache_keys['run'], (
-        'the freshly sampled trace is valid, so this test really does isolate map.pkl'
-    )
     assert 'map.pkl' not in manifest, 'a force-loaded stale MAP was re-recorded as valid'
+    assert 'trace.nc' not in manifest, (
+        'a trace sampled in a session that force-loaded a stale artifact was '
+        'vouched for anyway'
+    )
 
 
 @pytest.mark.slow

@@ -164,6 +164,42 @@ def test_drop_entry_is_a_noop_when_nothing_to_drop(tmp_path):
     assert cache.read_manifest(str(tmp_path))['trace.nc'] == 'def'
 
 
+def _raise_on_dump(monkeypatch):
+    """Simulate dying partway through serializing the manifest."""
+    def boom(*args, **kwargs):
+        raise RuntimeError('crash')
+
+    monkeypatch.setattr(cache.json, 'dump', boom)
+
+
+def test_write_manifest_leaves_the_previous_manifest_intact_when_it_dies(tmp_path, monkeypatch):
+    """Opening the manifest in place truncates it before anything is written.
+
+    A crash in that window costs every entry, including a trace.nc that took
+    hours, and this module exists to survive crashes.
+    """
+    cache.write_manifest(str(tmp_path), 'trace.nc', 'def')
+    _raise_on_dump(monkeypatch)
+
+    with pytest.raises(RuntimeError):
+        cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')
+
+    assert cache.read_manifest(str(tmp_path)) == {
+        'format_version': cache.FORMAT_VERSION, 'trace.nc': 'def'}
+
+
+def test_drop_entry_leaves_the_previous_manifest_intact_when_it_dies(tmp_path, monkeypatch):
+    """drop_entry rewrites the whole manifest too, so it has the same window."""
+    cache.write_manifest(str(tmp_path), 'trace.nc', 'def')
+    cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')
+    _raise_on_dump(monkeypatch)
+
+    with pytest.raises(RuntimeError):
+        cache.drop_entry(str(tmp_path), 'map.pkl')
+
+    assert cache.read_manifest(str(tmp_path))['trace.nc'] == 'def'
+
+
 def test_dropped_entry_no_longer_validates(tmp_path):
     """The point of dropping: a half written artifact must read as stale."""
     cache.write_manifest(str(tmp_path), 'map.pkl', 'abc')

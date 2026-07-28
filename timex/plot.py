@@ -518,7 +518,9 @@ def light_curve(data, name, soln, nplanets, mask=None, trace=None, use_gp=False,
             scale = 10**log_scale
             kernel = c2np_terms.Matern32Term(sigma=amp, rho=scale)
             residuals = y[mask] - (tra_mod + sys_mod)
-            diag = np.exp(2*lcjit) + yerr[mask]**2
+            # lcjit is already exp(log_sigma_lc), so the model's
+            # exp(2*log_sigma_lc) diagonal is lcjit**2
+            diag = lcjit**2 + yerr[mask]**2
             gp = C2NumpyGP(kernel)
             gp.compute(x[mask], diag=diag)
             gp_mod = gp.predict(residuals)
@@ -581,22 +583,32 @@ def light_curve(data, name, soln, nplanets, mask=None, trace=None, use_gp=False,
 
 def systematics(fit, name, style=1):
 
+    # imported here rather than at module level: io imports util, and util
+    # imports this module, so a top level import would be circular
+    from . import io
+
     trend = fit.fit_params['data'][name]['trend']
-    ntrend = trend if trend else 0
     spline = fit.fit_params['data'][name]['spline']
-    nspline = fit.fit_params['data'][name]['spline_knots'] if spline else 0
-    bias = fit.fit_params['data'][name]['add_bias']
-    nbias = 1 if bias else 0
     use_gp = fit.use_gp
 
     x = fit.data[name]['x']
     X = fit.data[name]['X']
+    # the column layout recorded by io.read_generic. Re-deriving it from the
+    # config here cannot see the chunk offset columns, which are appended last,
+    # so every block boundary would be shifted by the number of chunks.
+    layout = fit.data[name]['ncols']
     mask = fit.masks[name]
     if mask is None:
         mask = np.ones(len(x), dtype=bool)
-    w = fit.map_soln[f'{name}_weights']
-    covariates = not X.shape[1] == nspline + ntrend + nbias
-    ncovariates = X.shape[1] - ntrend - nspline - nbias
+    if X is None:
+        # a GP only fit has no design matrix, and so no weights site either.
+        # An empty matrix keeps every block below well defined so the GP panel
+        # can still be drawn.
+        X = np.zeros((len(x), 0))
+        w = np.zeros(0)
+    else:
+        w = fit.map_soln[f'{name}_weights']
+    covariates = layout['covariates'] > 0
 
     # GP prediction from MAP
     gp_pred = fit.map_soln.get(f'{name}_gp_pred', None) if use_gp else None
@@ -609,16 +621,19 @@ def systematics(fit, name, style=1):
 
     x_ = x[mask]
     X_ = X[mask]
-    X_cov = X_[:,:ncovariates]
-    w_cov = w[:ncovariates]
-    X_tre = X_[:,ncovariates:(ncovariates+ntrend)]
-    w_tre = w[ncovariates:(ncovariates+ntrend)]
-    X_spl = X_[:,(ncovariates+ntrend):(ncovariates+ntrend+nspline)]
-    w_spl = w[(ncovariates+ntrend):(ncovariates+ntrend+nspline)]
+    blocks = io.split_design(X_, w, layout)
+    (X_cov, w_cov) = blocks['covariates']
+    (X_tre, w_tre) = blocks['trend']
+    (X_spl, w_spl) = blocks['spline']
 
     if style == 1:
 
         ncols = sum([covariates, (trend is not None), spline])
+        if ncols == 0:
+            # style 1 has no GP panel, so a GP only fit leaves nothing to draw
+            # and plt.subplots would reject the zero column grid
+            print(f"Skipping systematics plot for {name}: no design matrix")
+            return None
         figsize = (3*ncols,6)
         fig, axs = plt.subplots(2, ncols, figsize=figsize, sharex=True)
 

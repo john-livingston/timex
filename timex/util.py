@@ -61,19 +61,12 @@ DERIVED_SUFFIXES = ('_light_curves', '_light_curves_hr', '_lc_pred', '_lm',
                     '_flare', '_bump', '_y_observed', '_gp_pred')
 
 
-def get_map_soln(trace):
-    # arviz trace is an InferenceData object
-    # numpyro uses potential_energy (= -logp), pymc uses lp
-    if "lp" in trace.sample_stats:
-        lp = trace.sample_stats["lp"]
-    else:
-        lp = -trace.sample_stats["potential_energy"]
-    # index the single best sample rather than masking a copy of the whole
-    # posterior, which would materialize every deterministic array
-    # nanargmax/nanmax skip nan log probabilities rather than silently
-    # selecting a nan sample as the "best" one
-    lp_values = np.asarray(lp.values)
-    chain, draw = np.unravel_index(np.nanargmax(lp_values), lp_values.shape)
+def get_soln_at(trace, chain, draw):
+    """Solution dict for a single posterior draw, indexed by (chain, draw).
+
+    Indexes the one sample rather than masking a copy of the whole posterior,
+    which would materialize every deterministic array.
+    """
     trace_map = trace.posterior.isel(chain=chain, draw=draw)
     soln = {}
     for k, v in trace_map.data_vars.items():
@@ -87,7 +80,73 @@ def get_map_soln(trace):
             # numpyro propagates the init shape into the sampled site, so the
             # site's own shape has to survive the round trip unchanged
             soln[k] = val
-    return soln, float(np.nanmax(lp_values))
+    return soln
+
+
+def get_map_soln(trace):
+    # arviz trace is an InferenceData object
+    # numpyro uses potential_energy (= -logp), pymc uses lp
+    if "lp" in trace.sample_stats:
+        lp = trace.sample_stats["lp"]
+    else:
+        lp = -trace.sample_stats["potential_energy"]
+    # nanargmax/nanmax skip nan log probabilities rather than silently
+    # selecting a nan sample as the "best" one
+    lp_values = np.asarray(lp.values)
+    chain, draw = np.unravel_index(np.nanargmax(lp_values), lp_values.shape)
+    return get_soln_at(trace, chain, draw), float(np.nanmax(lp_values))
+
+def get_max_loglike(trace, model_fn=None):
+    """Maximized log likelihood over the posterior draws, and the draw it came from.
+
+    BIC, AIC and AICc are defined in terms of the maximized likelihood, so the
+    log probability carried in sample_stats is the wrong quantity: it is the
+    joint log posterior, and it adds every prior term and the unconstraining
+    Jacobian. The systematics weight prior alone contributes several units per
+    design matrix column, enough to decide a detrending comparison, and its
+    width is a constant in model.py rather than a modelling choice.
+
+    az.from_numpyro fills the log_likelihood group from the observed sites, so
+    that group is used when present. A trace saved without it is evaluated
+    against model_fn instead. The GP branch's observed site carries one
+    multivariate log probability per draw and the plain branch carries one per
+    point, so both are summed over whatever dimensions they have beyond chain
+    and draw, then summed across sites and maximized over draws.
+
+    Returns (max_loglike, (chain, draw)). The index is what lets a caller
+    evaluate a penalty at the same parameter vector the criterion was
+    evaluated at: the likelihood maximizing draw is not the maximum posterior
+    draw get_map_soln selects, and a GP's effective degrees of freedom varies
+    by tens of units between the two.
+    """
+    log_like = None
+    if 'log_likelihood' in trace.groups():
+        log_like = {k: np.asarray(v.values)
+                    for k, v in trace.log_likelihood.data_vars.items()}
+    if not log_like:
+        if model_fn is None:
+            raise ValueError(
+                'trace has no log_likelihood group and no model_fn was given, '
+                'so the likelihood needed for the information criteria cannot '
+                'be evaluated'
+            )
+        from numpyro.infer.util import log_likelihood as numpyro_log_likelihood
+        # the posterior carries the deterministic sites too, and numpyro would
+        # substitute them for the model's own computation
+        samples = {k: np.asarray(v.values)
+                   for k, v in trace.posterior.data_vars.items()
+                   if not k.endswith(DERIVED_SUFFIXES)}
+        log_like = {k: np.asarray(v) for k, v in
+                    numpyro_log_likelihood(model_fn, samples, batch_ndims=2).items()}
+
+    total = None
+    for arr in log_like.values():
+        # dimensions past chain and draw are the observation dimensions
+        per_draw = arr.sum(axis=tuple(range(2, arr.ndim))) if arr.ndim > 2 else arr
+        total = per_draw if total is None else total + per_draw
+    chain, draw = np.unravel_index(np.nanargmax(total), total.shape)
+    return float(total[chain, draw]), (int(chain), int(draw))
+
 
 def get_var_names(data, bands, fit_basis, use_gp, fixed,
                   chromatic=False, log_sigma=True, weights=False, gp_config=None):
@@ -274,15 +333,35 @@ def bin_df(df, timecol='time', errcol='flux_err', binsize=60/86400., kind='media
     errcol : name of column with measurement errors
     binsize : size of bins (same units as time column)
     kind : median of points in each bin if set to 'median', else mean
+
+    The binned error is the bin's median point error over sqrt(N), inflated by
+    sqrt(pi/2) when the binned point is a median.
     """
     bins = np.arange(df[timecol].min(), df[timecol].max(), binsize)
     groups = df.groupby(np.digitize(df[timecol], bins))
+    # the per point error is the bin's median error either way: binning happens
+    # at read time, before any outlier clipping, so one ruined frame must not
+    # set the error of its whole bin
+    err = groups[errcol].median() / np.sqrt(groups.size())
     if kind == 'median':
         df_binned = groups.median()
+        # the median of a Gaussian sample scatters more than its mean, by
+        # sqrt(pi/2) = 1.2533 asymptotically, so the standard error of the mean
+        # understates a binned median by about 20 percent. the true ratio is
+        # below the asymptote at small N, and lower again at even N because the
+        # median then averages the two middle order statistics: 1.09 at N=4,
+        # 1.22 at N=9, 1.18 at N=10, 1.20 at N=16, 1.24 at N=25. at N=1 and
+        # N=2 the median is the mean, so the true ratio is exactly 1 and the
+        # full sqrt(pi/2) is overcorrection; real files reach this, a 2 minute
+        # binning of the shipped g band leaves one bin holding two points. so
+        # this overcorrects by 1.5 percent at N=25 and up to 25 percent at N=1
+        # or 2, leaving binned errors mildly conservative, which is the safe
+        # direction to be wrong in
+        err = err * np.sqrt(np.pi / 2)
     else:
+        # the binned point is the mean, whose standard error needs no inflation
         df_binned = groups.mean()
-    # bin error is the median point error scaled by sqrt(N) regardless of kind
-    df_binned[errcol] = groups[errcol].median() / np.sqrt(groups.size())
+    df_binned[errcol] = err
     return df_binned.dropna()
 
 def count_free_params(soln):
@@ -291,14 +370,35 @@ def count_free_params(soln):
                if not k.endswith(DERIVED_SUFFIXES))
 
 
-def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
+# GP hyperparameter sites are 'gp_log_amp'/'gp_log_scale' when shared, or those
+# names suffixed with the dataset name when gp.per_dataset asks for them. The
+# looser 'gp_log_' prefix would also match the jitter site of a dataset that
+# happens to be named 'gp'.
+GP_HYPER_PREFIXES = ('gp_log_amp', 'gp_log_scale')
 
+
+def count_gp_hyper(soln):
+    """Number of GP hyperparameter elements in a MAP solution dict.
+
+    Elements, not sites, so this stays in the same units as count_free_params
+    if a hyperparameter is ever vector valued.
+    """
+    return sum(np.size(v) for k, v in soln.items()
+               if k.startswith(GP_HYPER_PREFIXES))
+
+
+def compute_ic(max_loglike, nparams, ndata, method='BIC', verbose=True):
+    """Information criterion from the maximized log likelihood.
+
+    max_loglike is the likelihood, not the joint log posterior: see
+    get_max_loglike.
+    """
     if method == 'BIC':
-        ic = -2 * max_logp + nparams * np.log(ndata)
+        ic = -2 * max_loglike + nparams * np.log(ndata)
     elif method == 'AIC':
-        ic = 2 * nparams - 2 * max_logp
+        ic = 2 * nparams - 2 * max_loglike
     elif method == 'AICc':
-        ic = 2 * nparams - 2 * max_logp
+        ic = 2 * nparams - 2 * max_loglike
         denom = ndata - nparams - 1
         if denom <= 0:
             logging.warning(
@@ -307,11 +407,14 @@ def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
             )
             return float('nan')
         ic += 2 * (nparams**2 + nparams) / denom
+    else:
+        raise ValueError(
+            f"method must be one of 'BIC', 'AIC' or 'AICc', got {method!r}")
 
     if verbose:
         print('Number of datapoints: {}'.format(ndata))
         print('Number of parameters: {}'.format(nparams))
-        print('Max logp = {}'.format(max_logp))
+        print('Max log likelihood = {}'.format(max_loglike))
         print('{} = {}'.format(method, ic))
 
     return float(ic)
@@ -327,7 +430,14 @@ def format_tc_lines(planets, ref_time, t0_samples=None, t0_fixed=None):
     if t0_samples is not None:
         samps = np.atleast_2d(t0_samples)
         if samps.shape[0] != len(planets):
-            samps = samps.reshape(len(planets), -1)
+            # reshaping to (nplanets, -1) would not transpose a (ndraw,
+            # nplanets) array, it would interleave the planets: each output
+            # row then mixes draws from both, and every reported transit time
+            # lands somewhere between them with a width spanning the gap
+            raise ValueError(
+                f'expected one row of t0 samples per planet, got shape '
+                f'{samps.shape} for {len(planets)} planet(s)'
+            )
         for i, planet in enumerate(planets):
             lines.append(f'{planet} {samps[i].mean() + ref_time} {samps[i].std()}')
     else:
@@ -358,10 +468,18 @@ def get_corrected(data, name, soln, nplanets, mask=None, subtract_tc=True):
     # subtract every non-transit component, not just the linear model
     sys_mod = get_sys_model(name, soln, int(mask.sum()))
 
+    # the likelihood weights each point by sqrt(yerr**2 + exp(2*log_sigma_lc)),
+    # so the published error has to carry the fitted jitter too. everything
+    # here is in ppt, the units the jitter was fitted in
+    err = yerr[mask]
+    if f'{name}_log_sigma_lc' in soln:
+        log_sigma_lc = float(np.squeeze(soln[f'{name}_log_sigma_lc']))
+        err = np.sqrt(err**2 + np.exp(2*log_sigma_lc))
+
     cor = dict(
         x=x[mask]-offset,
         y=y[mask]-sys_mod,
-        yerr=yerr[mask],
+        yerr=err,
         x_hr=x_hr-offset,
         tra_mod_hr=tra_mod_hr
     )

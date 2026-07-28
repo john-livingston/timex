@@ -7,7 +7,13 @@ import hashlib
 import json
 import os
 
-FORMAT_VERSION = 1
+# bump whenever a change alters the numbers an artifact holds without altering
+# the config or the data bytes the keys are computed from. Version 2 marks the
+# sqrt(pi/2) inflation of median binned errors in util.bin_df and the switch of
+# the information criteria to the maximized likelihood: an out/ directory
+# written before those changes hashes identically, so only this version stops
+# its map.pkl and trace.nc from being reused under the new definitions.
+FORMAT_VERSION = 2
 
 # keys that affect sampling only, never the model or the MAP solution
 RUN_TIER = frozenset({'tune', 'draws', 'chains'})
@@ -89,12 +95,26 @@ def read_manifest(outdir):
     return manifest
 
 
+def _replace_manifest(outdir, manifest):
+    """Overwrite the manifest without ever leaving it truncated.
+
+    Opening the real path for writing empties it before json.dump runs, and a
+    crash in that window loses every entry, including a trace.nc that cost
+    hours. Building a sibling and renaming means the manifest is either the
+    old one or the new one.
+    """
+    fp = manifest_path(outdir)
+    tmp = f'{fp}.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+    os.replace(tmp, fp)
+
+
 def write_manifest(outdir, artifact, key):
     """Record that `artifact` was written under `key`, preserving other entries."""
     manifest = read_manifest(outdir) or {'format_version': FORMAT_VERSION}
     manifest[artifact] = key
-    with open(manifest_path(outdir), 'w') as f:
-        json.dump(manifest, f, indent=2, sort_keys=True)
+    _replace_manifest(outdir, manifest)
 
 
 def is_valid(manifest, artifact, expected_key):
@@ -116,5 +136,4 @@ def drop_entry(outdir, artifact):
     if not manifest or artifact not in manifest:
         return
     del manifest[artifact]
-    with open(manifest_path(outdir), 'w') as f:
-        json.dump(manifest, f, indent=2, sort_keys=True)
+    _replace_manifest(outdir, manifest)

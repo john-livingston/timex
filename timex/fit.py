@@ -213,7 +213,7 @@ class TransitFit:
                 read_fn = io.read_afphot
             else:
                 raise ValueError("format must be 'generic' or 'afphot'")
-            x, y, yerr, X, texp, x_hr, ref_time = read_fn(
+            x, y, yerr, X, texp, x_hr, ref_time, ncols = read_fn(
                 fp, 
                 binsize=data[n]['binsize'],
                 spline=data[n]['spline'],
@@ -230,7 +230,11 @@ class TransitFit:
             logging.info(f'loading data: {fn}')
             logging.info(f'data span: {data_iso[0]} - {data_iso[1]}')
             logging.info(f'ref. time: {ref_time}')
-            self.data[n] = dict(x=x, y=y, yerr=yerr, X=X, texp=texp, x_hr=x_hr, band=b, ref_time=ref_time)
+            # ncols records how many design matrix columns each block
+            # contributed, so consumers can slice X by block instead of
+            # re-deriving the sizes from the config, which cannot see the
+            # chunk offset columns appended last
+            self.data[n] = dict(x=x, y=y, yerr=yerr, X=X, texp=texp, x_hr=x_hr, band=b, ref_time=ref_time, ncols=ncols)
             self.masks[n] = None
         ref_times = [v['ref_time'] for k,v in self.data.items()]
         self.ref_time = min(ref_times)
@@ -251,15 +255,15 @@ class TransitFit:
         records the mismatch in _stale_force_loaded.
 
         For map.pkl and trace.nc, a name in _stale_force_loaded is never
-        reused as if it matched (build_model re-optimizes, sample re-runs
-        MCMC) and is never recorded in the manifest under the current key,
-        nor is anything derived from it. mask.pkl is a known exception:
-        clip_outliers gates on `self.masks[name] is None` rather than
-        consulting _stale_force_loaded, so a force-loaded stale mask is
-        silently reused for the model build and the likelihood instead of
-        being recomputed. The safe outcome for map.pkl/trace.nc is no
-        manifest entry at all, so the next ordinary run recomputes rather
-        than trusting an artifact this session only loaded because from_dir
+        reused as if it matched: build_model re-optimizes and sample re-runs
+        MCMC. mask.pkl is a known exception, since clip_outliers gates on
+        `self.masks[name] is None` rather than consulting this set, so a
+        force-loaded stale mask is reused as-is for the model build and the
+        likelihood instead of being recomputed.
+
+        Either way a non-empty set stops _may_record from vouching for
+        anything this session writes, so the next ordinary run recomputes
+        rather than trusting an artifact that only exists because from_dir
         asked for it.
         """
         if cache.is_valid(manifest, artifact, self._cache_keys[tier]):
@@ -279,6 +283,21 @@ class TransitFit:
             return True
         return False
 
+    def _may_record(self):
+        """Whether anything written this session may be vouched for in the manifest.
+
+        Any force-loaded stale artifact disqualifies every write, not only its
+        own. mask.pkl feeds model.build, the likelihood and the log_sigma_lc
+        priors, and map.pkl feeds the clipping, so an artifact derived from a
+        stale one is stale in turn and the manifest has no way to say so.
+
+        The cost is that a from_dir session which legitimately recomputes
+        records nothing, so the next ordinary run recomputes as well. That is
+        the safe direction: a wasted optimization rather than a silently
+        adopted artifact from another config.
+        """
+        return not self._stale_force_loaded
+
     def load_saved(self):
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
@@ -296,7 +315,8 @@ class TransitFit:
         if os.path.exists(os.path.join(self.outdir, 'mask.pkl')):
             if self._may_load('mask.pkl', 'model', manifest):
                 logging.info('loading mask(s) from mask.pkl')
-                self.masks = pickle.load(open(os.path.join(self.outdir, 'mask.pkl'), 'rb'))
+                self._merge_saved_masks(
+                    pickle.load(open(os.path.join(self.outdir, 'mask.pkl'), 'rb')))
         if os.path.exists(os.path.join(self.outdir, 'map.pkl')):
             if self._may_load('map.pkl', 'model', manifest):
                 logging.info('loading MAP solution from map.pkl')
@@ -311,6 +331,36 @@ class TransitFit:
             if self._may_load('trace.nc', 'run', manifest):
                 logging.info('loading trace from trace.pkl (legacy)')
                 self.trace = pickle.load(open(os.path.join(self.outdir, 'trace.pkl'), 'rb'))
+
+    def _merge_saved_masks(self, saved):
+        """Fold a loaded mask.pkl into the skeleton load_data built.
+
+        Assigning the loaded dict wholesale drops the `{name: None}` entry
+        load_data makes for every dataset, so a dataset added to fit.yaml
+        since the mask was written has no entry and clip_outliers raises
+        KeyError on it.
+
+        A mask selects points by position, so one written for a different
+        binning or trimming picks the wrong points instead of failing. Length
+        is the only check available here: mask.pkl records nothing about the
+        config it came from, and only the manifest key does, which from_dir
+        is entitled to override.
+        """
+        for name, mask in saved.items():
+            if name not in self.masks:
+                logging.warning(
+                    f'mask.pkl holds a mask for {name}, which is not in the '
+                    f'current config; ignoring it'
+                )
+                continue
+            n = len(self.data[name]['x'])
+            if mask is not None and len(mask) != n:
+                logging.warning(
+                    f'saved mask for {name} covers {len(mask)} points but the '
+                    f'dataset now has {n}; discarding it and reclipping'
+                )
+                continue
+            self.masks[name] = mask
 
     def _add_log_sigma_lc_priors(self):
         """Add log_sigma_lc priors for each dataset based on data std"""
@@ -417,6 +467,13 @@ class TransitFit:
             logging.info('reusing cached MAP solution; rebuilding model function')
         else:
             logging.info('building and optimizing model')
+            # drop the entry as soon as we commit to recomputing, not at the
+            # write below. The optimize step is the one a Ctrl-C, an OOM or a
+            # scheduler timeout lands in, and clip_outliers has by then already
+            # recorded a mask that the map.pkl on disk predates. Both would keep
+            # reading as valid under the same model key, which cannot tell a
+            # pre-clip MAP from a post-clip one.
+            cache.drop_entry(self.outdir, 'map.pkl')
         data, priors, masks = self.data, self.priors, self.masks
         nplanets, use_gp, chromatic = self.nplanets, self.use_gp, self.chromatic
         fixed, fit_basis = self.fixed, self.fit_basis
@@ -432,9 +489,8 @@ class TransitFit:
         if not reuse_map:
             self.map_soln = map_soln
             logging.info("Model built successfully")
-            cache.drop_entry(self.outdir, 'map.pkl')
             pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-            if 'map.pkl' not in self._stale_force_loaded:
+            if self._may_record():
                 cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
         # for name in self.data.keys():
         #     fn = f'fit-{name}.png'
@@ -458,11 +514,24 @@ class TransitFit:
         plt.subplots_adjust(hspace=0)
         plt.savefig(os.path.join(self.outdir, fn))
 
+    def _ic_inputs(self):
+        """(max log likelihood, its (chain, draw), nparams, ndata).
+
+        The single source for every information criterion this class reports,
+        so get_ic and the ic.txt block in save_results cannot drift apart on
+        which likelihood or which point count they use. The draw index comes
+        along because save_results measures the GP penalty at that same draw.
+
+        get_max_loglike can be expensive when the trace carries no
+        log_likelihood group, so this is computed once per report rather than
+        once per criterion.
+        """
+        max_loglike, index = util.get_max_loglike(self.trace, model_fn=self.model_fn)
+        return max_loglike, index, self._count_params(), self._count_data()
+
     def get_ic(self, ic='BIC', verbose=False):
-        soln, max_logp = util.get_map_soln(self.trace)
-        nparams = self._count_params()
-        ndata = self._count_data()
-        return util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=verbose)
+        max_loglike, _, nparams, ndata = self._ic_inputs()
+        return util.compute_ic(max_loglike, nparams, ndata, method=ic, verbose=verbose)
 
     def _count_params(self):
         """Count free parameters from MAP solution, excluding deterministics and observed."""
@@ -520,6 +589,7 @@ class TransitFit:
 
     def clip_outliers(self, fn=None):
         clipped = False
+        recomputed = False
         include_flare = self.include_flare
         include_bump = self.include_bump
         for name, data in self.data.items():
@@ -533,18 +603,41 @@ class TransitFit:
                     else:
                         current_fn = fn
                     fp = os.path.join(self.outdir, current_fn)
+                    previous = self.masks[name]
                     self.masks[name] = util.get_outlier_mask(
                         x, y, name, map_soln, use_gp,
                         nsig=clip_nsig, include_flare=include_flare, include_bump=include_bump, fp=fp
                         )
+                    recomputed = True
                     n_outliers = self.masks[name].size - self.masks[name].sum()
                     if n_outliers > 0:
                         logging.info(f'clipped {n_outliers} outlier(s)')
+                    # the refit is owed to a masking that moved, not to a mask
+                    # that excludes something: a reclip from a different MAP
+                    # can put a point back, and counting outliers calls that
+                    # zero, leaving map.pkl fitted under the old masking while
+                    # mask.pkl holds the new one, both under one model key
+                    if previous is None:
+                        # no entry means every point kept, so a first clip
+                        # that finds nothing has changed nothing
+                        previous = np.ones(self.masks[name].size, dtype=bool)
+                    if not np.array_equal(previous, self.masks[name]):
                         clipped = True
-        cache.drop_entry(self.outdir, 'mask.pkl')
-        pickle.dump(self.masks, open(os.path.join(self.outdir, 'mask.pkl'), 'wb'))
-        if 'mask.pkl' not in self._stale_force_loaded:
-            cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
+        # a warm resume recomputes nothing, and dropping the entry anyway
+        # leaves mask.pkl on disk with nothing vouching for it if the session
+        # exits before the rewrite, while map.pkl and trace.nc keep theirs
+        if recomputed:
+            if clipped:
+                # retire the MAP's entry before the new mask gets one, not at
+                # the rebuild below: the map.pkl on disk was optimized under
+                # the old masking, and the two share a model key, so between
+                # the two writes both would read as valid while describing
+                # different maskings
+                cache.drop_entry(self.outdir, 'map.pkl')
+            cache.drop_entry(self.outdir, 'mask.pkl')
+            pickle.dump(self.masks, open(os.path.join(self.outdir, 'mask.pkl'), 'wb'))
+            if self._may_record():
+                cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
         if clipped:
             self.build_model(start=self.map_soln, force=True)
             
@@ -552,8 +645,8 @@ class TransitFit:
 
         # a trace.nc force-loaded despite a key mismatch was produced under a
         # different config, so it is present but unusable: sample as if it were
-        # absent, and never vouch for it or for the map.pkl derived from it
-        # below, whether or not MCMC re-ran
+        # absent. _may_record is what keeps it, and the map.pkl derived from it
+        # below, out of the manifest
         stale_trace = 'trace.nc' in self._stale_force_loaded
         if self.clobber or self.trace is None or stale_trace:
             tune = self.tune
@@ -561,6 +654,11 @@ class TransitFit:
             chains = self.chains
             cores = self.cores
             logging.info(f'sampling for {tune} tuning steps and {draws} draws with {chains} chains on {cores} cores')
+            # as in build_model, drop the entry when we commit to recomputing
+            # rather than at the write. MCMC is the step that runs for hours, so
+            # it is the one that gets interrupted, and under clobber the mask it
+            # will be sampled against has already been recomputed.
+            cache.drop_entry(self.outdir, 'trace.nc')
             mcmc = model.sample(
                 self.model_fn,
                 self.map_soln,
@@ -570,9 +668,8 @@ class TransitFit:
                 cores=cores
             )
             self.trace = az.from_numpyro(mcmc)
-            cache.drop_entry(self.outdir, 'trace.nc')
             self.trace.to_netcdf(os.path.join(self.outdir, 'trace.nc'))
-            if 'trace.nc' not in self._stale_force_loaded:
+            if self._may_record():
                 cache.write_manifest(self.outdir, 'trace.nc', self._cache_keys['run'])
 
         self.summary = util.get_summary(
@@ -591,9 +688,7 @@ class TransitFit:
             self.map_soln = _add_gp_predictions(self.map_soln, self.data, self.masks, self.gp_config)
         cache.drop_entry(self.outdir, 'map.pkl')
         pickle.dump(self.map_soln, open(os.path.join(self.outdir, 'map.pkl'), 'wb'))
-        # this map.pkl is derived from the trace, so a stale trace disqualifies
-        # it even though map.pkl itself was never flagged
-        if not stale_trace and 'map.pkl' not in self._stale_force_loaded:
+        if self._may_record():
             cache.write_manifest(self.outdir, 'map.pkl', self._cache_keys['model'])
 
         if plot_fit:
@@ -794,35 +889,52 @@ class TransitFit:
         with open(os.path.join(self.outdir, 'tc.txt'), 'w') as f:
             for line in lines:
                 f.write(f'{line}\n')
+        # the criteria are defined in terms of the maximized likelihood, so the
+        # log posterior get_map_soln reports alongside the MAP is not it
+        max_loglike, ll_index, nparams, ndata = self._ic_inputs()
         with open(os.path.join(self.outdir, 'ic.txt'), 'w') as f:
-            soln, max_logp = util.get_map_soln(self.trace)
-            nparams = self._count_params()
-            ndata = self._count_data()
             ics = 'BIC AIC AICc'.split()
             for ic in ics:
-                val = util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=False)
+                val = util.compute_ic(max_loglike, nparams, ndata, method=ic, verbose=False)
                 f.write(f'{ic} {val:.2f}\n')
 
             # a GP is charged for its hyperparameters but absorbs far more
-            # degrees of freedom, so report a corrected count alongside. This
-            # does real GP linear algebra and reads GP hyperparameters back
-            # out of map_soln, so it can fail (e.g. a force-loaded map.pkl
-            # whose gp.per_dataset no longer matches the current config); a
-            # failure here must not cost the uncorrected rows above or the
-            # posterior samples / corrected light curves saved below.
+            # degrees of freedom, so report a corrected count alongside.
+            #
+            # nparams_edf, and every *_edf row below it, is an upper bound:
+            # compute_gp_edf measures the GP on its own and does not subtract
+            # what it shares with the design matrix, which is usually close to
+            # the full column count. The bias always charges the GP too much,
+            # so a GP that still wins on BIC_edf really wins, but one that
+            # loses narrowly has not been ruled out.
+            #
+            # compute_gp_edf does real GP linear algebra and reads GP
+            # hyperparameters back out of map_soln, so it can fail (e.g. a
+            # force-loaded map.pkl whose gp.per_dataset no longer matches the
+            # current config); a failure here must not cost the uncorrected
+            # rows above or the posterior samples / corrected light curves
+            # saved below.
             if self.use_gp:
                 try:
+                    # the penalty has to describe the parameter vector the
+                    # likelihood above was evaluated at. self.map_soln is the
+                    # maximum posterior draw and max_loglike comes from the
+                    # likelihood maximizing draw, which is a different draw:
+                    # on the shipped trace the edf ranges over 24 units across
+                    # draws, and it correlates with the likelihood, so taking
+                    # it from the maximum posterior draw under-penalizes the GP
+                    ll_soln = util.get_soln_at(self.trace, *ll_index)
                     edf_by_dataset = model.compute_gp_edf(
-                        self.map_soln, self.data, self.masks, self.gp_config)
+                        ll_soln, self.data, self.masks, self.gp_config)
                     if edf_by_dataset is not None:
                         edf = sum(edf_by_dataset.values())
-                        n_gp_hyper = sum(1 for k in self.map_soln if k.startswith('gp_log_'))
+                        n_gp_hyper = util.count_gp_hyper(ll_soln)
                         nparams_edf = nparams - n_gp_hyper + edf
                         f.write(f'edf {edf:.2f}\n')
                         f.write(f'nparams {nparams}\n')
                         f.write(f'nparams_edf {nparams_edf:.2f}\n')
                         for ic in ics:
-                            val = util.compute_ic(soln, max_logp, nparams_edf, ndata,
+                            val = util.compute_ic(max_loglike, nparams_edf, ndata,
                                                   method=ic, verbose=False)
                             f.write(f'{ic}_edf {val:.2f}\n')
                 except Exception as e:

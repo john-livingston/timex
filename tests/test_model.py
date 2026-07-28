@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from timex import model
 
@@ -10,30 +11,57 @@ def _gp_inputs(n=100):
     return datasets, masks
 
 
-def test_add_gp_predictions_without_mean_site(map_soln):
-    datasets, masks = _gp_inputs()
-    soln = dict(map_soln)
-    del soln['g_mean']            # include_mean=False leaves no mean site
-    soln['gp_log_amp'] = np.array(-1.0)
-    soln['gp_log_scale'] = np.array(-2.0)
-
-    out = model._add_gp_predictions(soln, datasets, masks, gp_config=None)
-
-    assert 'g_gp_pred' in out
-    assert out['g_gp_pred'].shape == (100,)
-    assert np.all(np.isfinite(out['g_gp_pred']))
+# the GP prediction is the conditional mean K (K + diag)^-1 r, and every input
+# to it is fixed here so the answer can be built independently
+AMP, RHO, JIT = 1.3, 0.018, 0.35
+YERR, MEAN, LM, DEPTH = 0.2, 0.5, 0.25, -1.0
 
 
-def test_add_gp_predictions_with_mean_site(map_soln):
-    datasets, masks = _gp_inputs()
-    soln = dict(map_soln)
-    soln['gp_log_amp'] = np.array(-1.0)
-    soln['gp_log_scale'] = np.array(-2.0)
+def _dense_conditional_mean(x, residuals):
+    """K (K + diag)^-1 r with a dense Matern32 kernel, written out.
 
-    out = model._add_gp_predictions(soln, datasets, masks, gp_config=None)
+    Independent of celerite2's factorization: this is the textbook form of the
+    same quantity, so agreement is a real cross check rather than a mirror.
+    """
+    d = x[:, None] - x[None, :]
+    r = np.sqrt(3) * np.abs(d) / RHO
+    K = AMP**2 * (1 + r) * np.exp(-r)
+    diag = np.full(len(x), JIT**2 + YERR**2)
+    return K @ np.linalg.solve(K + np.diag(diag), residuals)
 
-    assert out['g_gp_pred'].shape == (100,)
-    assert np.all(np.isfinite(out['g_gp_pred']))
+
+@pytest.mark.parametrize('include_mean', [True, False])
+def test_add_gp_predictions_matches_the_dense_conditional_mean(include_mean):
+    """The value, not the shape. The GP prediction is subtracted from the data
+    in every *-cor.csv and every residual report, so a prediction that is
+    merely finite and correctly shaped is not evidence of anything: replacing
+    gp.predict with zeros, or conditioning on the raw flux instead of on the
+    residuals, both survive a shape assertion.
+
+    Hand derived: the deterministic model is mean + light curve + lm, so the
+    residuals are y - (0.5 - 1.0 + 0.25) = y + 0.25 with a mean site and
+    y + 0.75 without one, and the conditional mean of those follows from the
+    Matern32 kernel directly.
+    """
+    n = 12
+    x = np.linspace(0.0, 0.11, n)
+    y = np.arange(n, dtype=float)
+    datasets = {'g': dict(x=x, y=y, yerr=np.full(n, YERR))}
+    soln = {
+        'g_lm': np.full(n, LM),
+        'g_light_curves': np.full(n, DEPTH),
+        'gp_log_amp': np.array(np.log10(AMP)),
+        'gp_log_scale': np.array(np.log10(RHO)),
+        'g_log_sigma_lc': np.array(np.log(JIT)),
+    }
+    if include_mean:
+        soln['g_mean'] = np.array(MEAN)
+
+    out = model._add_gp_predictions(soln, datasets, {'g': None}, gp_config=None)
+
+    model_flux = (MEAN if include_mean else 0.0) + DEPTH + LM
+    expected = _dense_conditional_mean(x, y - model_flux)
+    assert out['g_gp_pred'] == pytest.approx(expected, abs=1e-8)
 
 
 def test_add_gp_predictions_missing_mean_matches_explicit_zero(map_soln):

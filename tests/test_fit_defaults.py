@@ -56,12 +56,13 @@ def test_get_ic_counts_only_unmasked_points(monkeypatch):
 
     captured = {}
 
-    def fake_compute_ic(soln, max_logp, nparams, ndata, method='BIC', verbose=True):
+    def fake_compute_ic(max_loglike, nparams, ndata, method='BIC', verbose=True):
         captured['ndata'] = ndata
         return 0.0
 
     tf = fit.TransitFit.__new__(fit.TransitFit)
     tf.trace = None
+    tf.model_fn = None
     tf.data = {'g': dict(x=np.arange(10.0)), 'r': dict(x=np.arange(10.0))}
     mask = np.ones(10, dtype=bool)
     mask[:3] = False
@@ -69,8 +70,38 @@ def test_get_ic_counts_only_unmasked_points(monkeypatch):
     tf.map_soln = {'t0': np.array(0.1)}
 
     monkeypatch.setattr(util, 'compute_ic', fake_compute_ic)
-    monkeypatch.setattr(util, 'get_map_soln', lambda trace: ({}, -1.0))
+    monkeypatch.setattr(util, 'get_max_loglike',
+                        lambda trace, model_fn=None: (-1.0, (0, 0)))
     monkeypatch.setattr(fit.TransitFit, '_count_params', lambda self: 1)
 
     tf.get_ic()
     assert captured['ndata'] == 17, 'expected 7 unmasked in g plus 10 in r'
+
+
+def test_save_corrected_writes_jitter_inflated_errors_in_relative_flux(tmp_path, map_soln):
+    """The corrected light curve is published in relative flux, while the fit
+    and its jitter live in ppt. Adding the jitter after the 1e-3 conversion,
+    or leaving it out, both give an error column that no longer matches the
+    weights the fit used.
+    """
+    import numpy as np
+    import pandas as pd
+    from timex import fit
+
+    n = 100
+    tf = fit.TransitFit.__new__(fit.TransitFit)
+    tf.outdir = str(tmp_path)
+    tf.wd = str(tmp_path / 'target')
+    tf.ref_time = 2460000.
+    tf.nplanets = 1
+    tf.map_soln = map_soln
+    tf.data = {'g': dict(x=np.linspace(0., .1, n), y=np.zeros(n),
+                         yerr=np.full(n, .5), x_hr=np.linspace(0., .1, 500))}
+    tf.masks = {'g': np.ones(n, dtype=bool)}
+
+    tf.save_corrected()
+
+    df = pd.read_csv(tmp_path / 'target-g-cor.csv')
+    # 0.5 ppt photometric error and a jitter of exp(-1) ppt combine to
+    # sqrt(0.25 + 0.1353353) = 0.6207538 ppt, or 6.207538e-4 in relative flux
+    assert np.allclose(df['yerr'].values, 6.207538e-4, atol=1e-10)

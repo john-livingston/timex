@@ -413,6 +413,44 @@ def test_sampling_that_dies_leaves_no_entry_vouching_for_the_previous_trace(tmp_
     )
 
 
+def test_a_stale_mask_disqualifies_the_map_rederived_after_sampling(tmp_path, monkeypatch):
+    """The sample() end of the property build_model's site already has.
+
+    mask.pkl can be stale while trace.nc and map.pkl are both current: from_dir
+    force-loads the mismatched mask, clip_outliers reuses it as-is rather than
+    recomputing it, and the run tier key never moved, so MCMC is skipped
+    entirely. The map.pkl sample() then rederives from that trace is still the
+    best draw of a posterior sampled under a mask the current config does not
+    produce. Asking only whether the trace was stale, and whether map.pkl
+    itself was force-loaded, answers no to both and records it.
+    """
+    import arviz as az
+    from timex import cache, fit
+
+    tf = _bare_fit(tmp_path, stale={'mask.pkl'})
+    tf.use_gp = False
+    tf.bands = []
+    rng = np.random.default_rng(0)
+    tf.trace = az.from_dict(
+        posterior={k: rng.normal(size=(2, 40))
+                   for k in ('t0', 'period', 'b', 'dur', 'ror')},
+        sample_stats={'lp': rng.normal(size=(2, 40))},
+    )
+
+    def must_not_sample(*args, **kwargs):
+        raise AssertionError('setup: the trace is current, so MCMC must be skipped')
+
+    monkeypatch.setattr(fit.model, 'sample', must_not_sample)
+
+    tf.sample(plot_fit=False, plot_systematics=False)
+
+    manifest = cache.read_manifest(str(tmp_path)) or {}
+    assert 'map.pkl' not in manifest, (
+        'a MAP rederived from a posterior sampled under a stale mask was '
+        'recorded under the current key'
+    )
+
+
 def _load_params(wd):
     with open(os.path.join(wd, 'fit.yaml')) as f:
         fit_params = yaml.safe_load(f)

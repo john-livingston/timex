@@ -490,6 +490,21 @@ def compute_gp_edf(map_soln, datasets, masks, gp_config, max_points=5000):
     Computed as n - tr(S (K+S)^-1), which needs only the diagonal of the
     inverse: n solves, each O(n), so O(n^2) overall.
 
+    This is an upper bound, not the joint effective degrees of freedom of the
+    fit. It measures the GP alone. A model that also has a parametric mean
+    costs p + tr(K C^-1) - tr(K C^-1 P), where p is the number of design
+    columns and P projects onto the design matrix under C = K + S. That last
+    term is the overlap between the GP and the design, and it is not
+    subtracted here. It approaches its bound p whenever the GP can reproduce
+    the design columns, which is the ordinary case: one real fit measured
+    1.954 against a bound of 2, and a 10 column design on 560 points would
+    inflate BIC_edf by up to 63.
+
+    The overlap is non-negative, so omitting it always charges the GP too
+    much. It cannot manufacture a preference for a GP, only suppress a real
+    one. Subtracting it costs one more n by p solve and is a modelling
+    decision rather than a cleanup, so it is deliberately left undone.
+
     Returns {dataset_name: edf}, or None if any dataset exceeds max_points,
     since the cost is prohibitive at survey scale. Returning None rather than
     a partial sum keeps the caller from reporting a number that omits a

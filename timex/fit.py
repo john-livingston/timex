@@ -862,12 +862,21 @@ class TransitFit:
                 f.write(f'{ic} {val:.2f}\n')
 
             # a GP is charged for its hyperparameters but absorbs far more
-            # degrees of freedom, so report a corrected count alongside. This
-            # does real GP linear algebra and reads GP hyperparameters back
-            # out of map_soln, so it can fail (e.g. a force-loaded map.pkl
-            # whose gp.per_dataset no longer matches the current config); a
-            # failure here must not cost the uncorrected rows above or the
-            # posterior samples / corrected light curves saved below.
+            # degrees of freedom, so report a corrected count alongside.
+            #
+            # nparams_edf, and every *_edf row below it, is an upper bound:
+            # compute_gp_edf measures the GP on its own and does not subtract
+            # what it shares with the design matrix, which is usually close to
+            # the full column count. The bias always charges the GP too much,
+            # so a GP that still wins on BIC_edf really wins, but one that
+            # loses narrowly has not been ruled out.
+            #
+            # compute_gp_edf does real GP linear algebra and reads GP
+            # hyperparameters back out of map_soln, so it can fail (e.g. a
+            # force-loaded map.pkl whose gp.per_dataset no longer matches the
+            # current config); a failure here must not cost the uncorrected
+            # rows above or the posterior samples / corrected light curves
+            # saved below.
             if self.use_gp:
                 try:
                     edf_by_dataset = model.compute_gp_edf(

@@ -73,3 +73,17 @@ All outputs are saved to the `out/` directory (or custom `--outdir`):
 | `timex.log` | Full log file |
 | `fit.yaml`, `sys.yaml` | Copies of input configuration |
 | `cache.json` | Records which config and data each cached artifact was produced from |
+
+### Effective degrees of freedom
+
+For a GP fit, `ic.txt` carries a second set of rows (`edf`, `nparams_edf`,
+`BIC_edf`, `AIC_edf`, `AICc_edf`) that charge the GP for the flexibility it
+actually uses instead of for its handful of hyperparameters.
+
+`nparams_edf` is an upper bound. It measures the GP on its own and does not
+subtract the flexibility the GP shares with the design matrix, which is
+typically close to the full number of design columns: a 10 column design can
+inflate `BIC_edf` by up to about 63 on 560 points. The bias always runs one
+way, charging the GP too much, so a GP that still wins on `BIC_edf` really
+wins, while one that loses by less than the number of design columns has not
+been ruled out.

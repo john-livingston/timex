@@ -92,10 +92,18 @@ def test_returns_none_and_warns_above_max_points(caplog):
     assert str(len(data['g']['x'])) in caplog.text
 
 
+MAX_LOGLIKE = -7.0
+MAX_LOGP = -1.0
+
+
 def _save_results_fit(tmp_path, monkeypatch, map_soln, nparams, edf):
     """A TransitFit carrying only what save_results reads, with the edf and the
     raw parameter count pinned so ic.txt's nparams_edf row is a pure function
-    of how many GP hyperparameters save_results decides to remove."""
+    of how many GP hyperparameters save_results decides to remove.
+
+    The maximized likelihood and the maximized log posterior are deliberately
+    different numbers, so an ic.txt row built from the wrong one is visible.
+    """
     from timex import fit
 
     tf = fit.TransitFit.__new__(fit.TransitFit)
@@ -122,8 +130,9 @@ def _save_results_fit(tmp_path, monkeypatch, map_soln, nparams, edf):
 
     tf.trace = _FakeTrace()
 
-    monkeypatch.setattr(fit.util, 'get_map_soln', lambda trace: ({}, -1.0))
-    monkeypatch.setattr(fit.util, 'get_max_loglike', lambda trace, model_fn=None: -1.0)
+    monkeypatch.setattr(fit.util, 'get_map_soln', lambda trace: ({}, MAX_LOGP))
+    monkeypatch.setattr(fit.util, 'get_max_loglike',
+                        lambda trace, model_fn=None: MAX_LOGLIKE)
     monkeypatch.setattr(fit.TransitFit, '_count_params', lambda self: nparams)
     monkeypatch.setattr(fit.TransitFit, '_count_data', lambda self: 500)
     monkeypatch.setattr(fit.model, 'compute_gp_edf',
@@ -158,6 +167,12 @@ def test_nparams_edf_does_not_charge_a_dataset_named_gp_as_a_hyperparameter(
     assert float(rows['edf']) == 4.0
     # 10 parameters, minus the 2 GP hyperparameters, plus 4 edf
     assert float(rows['nparams_edf']) == 12.0
+    # -2 * (-7) + 10 * ln(500) = 14 + 62.146081; from the log posterior
+    # instead it would be 64.15
+    assert float(rows['BIC']) == 76.15
+    # and the corrected row is the same likelihood against nparams_edf:
+    # 14 + 12 * ln(500) = 88.575297
+    assert float(rows['BIC_edf']) == 88.58
 
 
 def test_nparams_edf_removes_every_hyperparameter_element(tmp_path, monkeypatch):
@@ -176,6 +191,9 @@ def test_nparams_edf_removes_every_hyperparameter_element(tmp_path, monkeypatch)
     rows = _ic_rows(tmp_path)
     # 20 parameters, minus 6 hyperparameter elements, plus 5 edf
     assert float(rows['nparams_edf']) == 19.0
+    # 14 + 20 * ln(500) = 138.292162, and 14 + 19 * ln(500) = 132.077554
+    assert float(rows['BIC']) == 138.29
+    assert float(rows['BIC_edf']) == 132.08
 
 
 def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
@@ -216,8 +234,9 @@ def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
 
     tf.trace = _FakeTrace()
 
-    monkeypatch.setattr(fit.util, 'get_map_soln', lambda trace: ({}, -1.0))
-    monkeypatch.setattr(fit.util, 'get_max_loglike', lambda trace, model_fn=None: -1.0)
+    monkeypatch.setattr(fit.util, 'get_map_soln', lambda trace: ({}, MAX_LOGP))
+    monkeypatch.setattr(fit.util, 'get_max_loglike',
+                        lambda trace, model_fn=None: MAX_LOGLIKE)
     monkeypatch.setattr(fit.TransitFit, '_count_params', lambda self: 3)
     monkeypatch.setattr(fit.TransitFit, '_count_data', lambda self: 50)
 
@@ -236,7 +255,12 @@ def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
         tf.save_results()
 
     ic_text = (tmp_path / 'ic.txt').read_text()
-    assert 'BIC' in ic_text, 'the three uncorrected rows must survive an edf failure'
+    rows = _ic_rows(tmp_path)
+    # the surviving rows must also still be right: 14 + 3 * ln(50) = 25.736069
+    assert float(rows['BIC']) == 25.74, (
+        'the three uncorrected rows must survive an edf failure intact'
+    )
+    assert set(rows) == {'BIC', 'AIC', 'AICc'}
     assert 'edf' not in ic_text, 'a failed edf computation must not write corrected rows'
     assert calls == ['posterior', 'corrected'], (
         'save_posterior_samples/save_corrected must still run after an edf failure'

@@ -184,13 +184,53 @@ def test_summary_reports_every_sampled_parameter_and_no_fixed_one(run):
     assert not any(n.startswith('u_star') for n in reported), 'u_star is fixed'
 
 
-def test_ic_txt_reports_the_uncorrected_criteria(run):
-    """The example fits no GP, so only the three plain rows are written and the
-    edf block must not appear."""
-    wd, _ = run
+def _ic_rows(wd):
     rows = {}
     for line in open(os.path.join(wd, 'out', 'ic.txt')):
         key, value = line.split()
         rows[key] = float(value)
+    return rows
+
+
+def test_ic_txt_reports_the_uncorrected_criteria(run):
+    """The example fits no GP, so only the three plain rows are written and the
+    edf block must not appear."""
+    wd, _ = run
+    rows = _ic_rows(wd)
     assert set(rows) == {'BIC', 'AIC', 'AICc'}
     assert all(np.isfinite(v) for v in rows.values())
+
+
+def test_ic_txt_is_built_from_the_maximized_likelihood(run):
+    """BIC is -2 lnL_max + k ln(n), and lnL_max is the maximized likelihood.
+
+    save_results has its own copy of the criterion computation, separate from
+    get_ic, and it is the copy that writes the file anyone reads. Feeding it
+    the log probability that get_map_soln returns alongside the MAP puts the
+    joint log posterior there instead, so every prior term and the
+    unconstraining Jacobian enter the criteria, including the systematics
+    weight prior whose width is a constant in model.py rather than a modelling
+    choice.
+    """
+    wd, tf = run
+    from timex import util
+
+    # the maximized likelihood, written out from the log_likelihood group
+    # arviz fills from the observed sites: sum the observation dimensions of
+    # every site, add the sites together, then maximize over draws
+    total = None
+    for var in tf.trace.log_likelihood.data_vars.values():
+        arr = np.asarray(var.values)
+        per_draw = arr.reshape(arr.shape[0], arr.shape[1], -1).sum(axis=2)
+        total = per_draw if total is None else total + per_draw
+    max_loglike = float(total.max())
+
+    expected = -2 * max_loglike + tf._count_params() * np.log(tf._count_data())
+
+    # ic.txt is written to two decimals
+    assert _ic_rows(wd)['BIC'] == pytest.approx(expected, abs=0.01)
+
+    # and the two candidate quantities are far apart here, so the assertion
+    # above is not satisfied by either one
+    _, max_logp = util.get_map_soln(tf.trace)
+    assert abs(max_logp - max_loglike) > 1.0

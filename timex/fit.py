@@ -613,13 +613,13 @@ class TransitFit:
                     if n_outliers > 0:
                         logging.info(f'clipped {n_outliers} outlier(s)')
                     # the refit is owed to a masking that moved, not to a mask
-                    # that excludes something. A reclip from a different MAP
+                    # that excludes something: a reclip from a different MAP
                     # can put a point back, and counting outliers calls that
-                    # zero, so map.pkl would keep the old masking while
-                    # mask.pkl holds the new one, both under one model key.
-                    # no entry means every point kept, so a first clip that
-                    # finds nothing has changed nothing
+                    # zero, leaving map.pkl fitted under the old masking while
+                    # mask.pkl holds the new one, both under one model key
                     if previous is None:
+                        # no entry means every point kept, so a first clip
+                        # that finds nothing has changed nothing
                         previous = np.ones(self.masks[name].size, dtype=bool)
                     if not np.array_equal(previous, self.masks[name]):
                         clipped = True

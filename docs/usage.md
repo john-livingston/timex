@@ -88,12 +88,13 @@ All outputs are saved to the `out/` directory (or custom `--outdir`):
     change against one written after it, and do not carry an old number into a
     model comparison table.
 
-    Nothing marks the old files as stale. No configuration changed, so the
-    cache keys in `cache.json` are unchanged: a resumed run reuses the same
-    trace and MAP as before and gives no sign that the criteria mean something
-    different now. `save_results` does rewrite `ic.txt` on every run, so
-    rerunning any fit refreshes it, but an `ic.txt` sitting in an output
-    directory you have not rerun still holds a number on the old definition.
+    Rerunning a fit is what refreshes the file. Nothing in the configuration
+    changed, so the cache keys in `cache.json` cannot see this, but the
+    manifest also records a format version and that version was bumped for
+    this change: every artifact in an output directory written before it now
+    reads as stale, so the first rerun redoes the optimization and the
+    sampling rather than resuming. An `ic.txt` sitting in a directory you
+    never rerun still holds a number on the old definition.
 
 ### Effective degrees of freedom
 
@@ -109,6 +110,12 @@ column design can inflate `BIC_edf` by up to about 63 on 560 points. The bias
 always runs one way, penalising the GP, so a GP that still wins on `BIC_edf`
 really wins, while one that loses by less than the number of design columns has
 not been ruled out.
+
+`edf` is measured at the draw the maximized likelihood came from, not at the
+maximum posterior draw the rest of the outputs are built from. A criterion and
+its penalty have to describe one parameter vector: the edf varies by tens of
+units across a real posterior and moves with the likelihood, so taking the two
+from different draws would shift `BIC_edf` by more than the correction is worth.
 
 ### Corrected light curves
 

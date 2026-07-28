@@ -56,7 +56,7 @@ def test_get_ic_counts_only_unmasked_points(monkeypatch):
 
     captured = {}
 
-    def fake_compute_ic(soln, max_loglike, nparams, ndata, method='BIC', verbose=True):
+    def fake_compute_ic(max_loglike, nparams, ndata, method='BIC', verbose=True):
         captured['ndata'] = ndata
         return 0.0
 
@@ -70,8 +70,8 @@ def test_get_ic_counts_only_unmasked_points(monkeypatch):
     tf.map_soln = {'t0': np.array(0.1)}
 
     monkeypatch.setattr(util, 'compute_ic', fake_compute_ic)
-    monkeypatch.setattr(util, 'get_map_soln', lambda trace: ({}, -1.0))
-    monkeypatch.setattr(util, 'get_max_loglike', lambda trace, model_fn=None: -1.0)
+    monkeypatch.setattr(util, 'get_max_loglike',
+                        lambda trace, model_fn=None: (-1.0, (0, 0)))
     monkeypatch.setattr(fit.TransitFit, '_count_params', lambda self: 1)
 
     tf.get_ic()

@@ -61,19 +61,12 @@ DERIVED_SUFFIXES = ('_light_curves', '_light_curves_hr', '_lc_pred', '_lm',
                     '_flare', '_bump', '_y_observed', '_gp_pred')
 
 
-def get_map_soln(trace):
-    # arviz trace is an InferenceData object
-    # numpyro uses potential_energy (= -logp), pymc uses lp
-    if "lp" in trace.sample_stats:
-        lp = trace.sample_stats["lp"]
-    else:
-        lp = -trace.sample_stats["potential_energy"]
-    # index the single best sample rather than masking a copy of the whole
-    # posterior, which would materialize every deterministic array
-    # nanargmax/nanmax skip nan log probabilities rather than silently
-    # selecting a nan sample as the "best" one
-    lp_values = np.asarray(lp.values)
-    chain, draw = np.unravel_index(np.nanargmax(lp_values), lp_values.shape)
+def get_soln_at(trace, chain, draw):
+    """Solution dict for a single posterior draw, indexed by (chain, draw).
+
+    Indexes the one sample rather than masking a copy of the whole posterior,
+    which would materialize every deterministic array.
+    """
     trace_map = trace.posterior.isel(chain=chain, draw=draw)
     soln = {}
     for k, v in trace_map.data_vars.items():
@@ -87,10 +80,24 @@ def get_map_soln(trace):
             # numpyro propagates the init shape into the sampled site, so the
             # site's own shape has to survive the round trip unchanged
             soln[k] = val
-    return soln, float(np.nanmax(lp_values))
+    return soln
+
+
+def get_map_soln(trace):
+    # arviz trace is an InferenceData object
+    # numpyro uses potential_energy (= -logp), pymc uses lp
+    if "lp" in trace.sample_stats:
+        lp = trace.sample_stats["lp"]
+    else:
+        lp = -trace.sample_stats["potential_energy"]
+    # nanargmax/nanmax skip nan log probabilities rather than silently
+    # selecting a nan sample as the "best" one
+    lp_values = np.asarray(lp.values)
+    chain, draw = np.unravel_index(np.nanargmax(lp_values), lp_values.shape)
+    return get_soln_at(trace, chain, draw), float(np.nanmax(lp_values))
 
 def get_max_loglike(trace, model_fn=None):
-    """Maximized log likelihood over the posterior draws.
+    """Maximized log likelihood over the posterior draws, and the draw it came from.
 
     BIC, AIC and AICc are defined in terms of the maximized likelihood, so the
     log probability carried in sample_stats is the wrong quantity: it is the
@@ -105,6 +112,12 @@ def get_max_loglike(trace, model_fn=None):
     multivariate log probability per draw and the plain branch carries one per
     point, so both are summed over whatever dimensions they have beyond chain
     and draw, then summed across sites and maximized over draws.
+
+    Returns (max_loglike, (chain, draw)). The index is what lets a caller
+    evaluate a penalty at the same parameter vector the criterion was
+    evaluated at: the likelihood maximizing draw is not the maximum posterior
+    draw self.map_soln holds, and a GP's effective degrees of freedom varies
+    by tens of units between the two.
     """
     log_like = None
     if 'log_likelihood' in trace.groups():
@@ -131,7 +144,8 @@ def get_max_loglike(trace, model_fn=None):
         # dimensions past chain and draw are the observation dimensions
         per_draw = arr.sum(axis=tuple(range(2, arr.ndim))) if arr.ndim > 2 else arr
         total = per_draw if total is None else total + per_draw
-    return float(np.nanmax(total))
+    chain, draw = np.unravel_index(np.nanargmax(total), total.shape)
+    return float(total[chain, draw]), (int(chain), int(draw))
 
 
 def get_var_names(data, bands, fit_basis, use_gp, fixed,
@@ -369,7 +383,7 @@ def count_gp_hyper(soln):
                if k.startswith(GP_HYPER_PREFIXES))
 
 
-def compute_ic(map_soln, max_loglike, nparams, ndata, method='BIC', verbose=True):
+def compute_ic(max_loglike, nparams, ndata, method='BIC', verbose=True):
     """Information criterion from the maximized log likelihood.
 
     max_loglike is the likelihood, not the joint log posterior: see

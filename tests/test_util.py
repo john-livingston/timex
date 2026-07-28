@@ -556,7 +556,7 @@ def test_aicc_is_nan_when_denominator_is_not_positive(caplog):
     from timex import util
 
     with caplog.at_level(logging.WARNING):
-        ic = util.compute_ic({}, -100.0, nparams=50, ndata=50,
+        ic = util.compute_ic(-100.0, nparams=50, ndata=50,
                              method='AICc', verbose=False)
     assert np.isnan(ic)
     assert '50' in caplog.text
@@ -570,7 +570,7 @@ def test_bic_penalty_counts_the_data_not_the_parameters():
     """
     from timex import util
 
-    assert util.compute_ic({}, -100.0, nparams=3, ndata=100,
+    assert util.compute_ic(-100.0, nparams=3, ndata=100,
                            method='BIC', verbose=False) == \
         pytest.approx(213.8155105579643, abs=1e-9)
 
@@ -582,7 +582,7 @@ def test_aic_penalty_is_twice_the_parameter_count():
     """
     from timex import util
 
-    assert util.compute_ic({}, -100.0, nparams=3, ndata=100,
+    assert util.compute_ic(-100.0, nparams=3, ndata=100,
                            method='AIC', verbose=False) == \
         pytest.approx(206.0, abs=1e-9)
 
@@ -595,7 +595,7 @@ def test_aicc_adds_the_small_sample_correction_to_aic():
     """
     from timex import util
 
-    assert util.compute_ic({}, -100.0, nparams=3, ndata=100,
+    assert util.compute_ic(-100.0, nparams=3, ndata=100,
                            method='AICc', verbose=False) == \
         pytest.approx(206.25, abs=1e-9)
 
@@ -607,7 +607,7 @@ def test_aicc_is_finite_just_above_the_denominator_boundary():
     """
     from timex import util
 
-    assert util.compute_ic({}, -100.0, nparams=3, ndata=5,
+    assert util.compute_ic(-100.0, nparams=3, ndata=5,
                            method='AICc', verbose=False) == \
         pytest.approx(230.0, abs=1e-9)
 
@@ -619,10 +619,10 @@ def test_bic_and_aic_unaffected_by_the_aicc_guard():
     """
     from timex import util
 
-    assert util.compute_ic({}, -100.0, nparams=50, ndata=50,
+    assert util.compute_ic(-100.0, nparams=50, ndata=50,
                            method='BIC', verbose=False) == \
         pytest.approx(395.6011502714073, abs=1e-9)
-    assert util.compute_ic({}, -100.0, nparams=50, ndata=50,
+    assert util.compute_ic(-100.0, nparams=50, ndata=50,
                            method='AIC', verbose=False) == \
         pytest.approx(300.0, abs=1e-9)
 
@@ -632,7 +632,7 @@ def test_compute_ic_rejects_an_unknown_method():
     so a caller asking for an unsupported criterion gets an UnboundLocalError
     about a local variable rather than a message naming what it passed."""
     with pytest.raises(ValueError, match='WAIC'):
-        util.compute_ic({}, -100.0, nparams=3, ndata=50,
+        util.compute_ic(-100.0, nparams=3, ndata=50,
                         method='WAIC', verbose=False)
 
 

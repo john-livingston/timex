@@ -131,7 +131,7 @@ def test_get_max_loglike_maximizes_over_draws():
             [[[-1.0, -2.0], [-3.0, -4.0], [-0.5, -0.25]]])},
     )
 
-    assert util.get_max_loglike(idata) == pytest.approx(-0.75)
+    assert util.get_max_loglike(idata)[0] == pytest.approx(-0.75)
 
 
 def test_get_max_loglike_sums_every_observed_site():
@@ -150,7 +150,7 @@ def test_get_max_loglike_sums_every_observed_site():
     )
 
     # per draw totals are -13.0 and -5.0
-    assert util.get_max_loglike(idata) == pytest.approx(-5.0)
+    assert util.get_max_loglike(idata)[0] == pytest.approx(-5.0)
 
 
 def test_get_max_loglike_falls_back_to_the_model():
@@ -158,7 +158,7 @@ def test_get_max_loglike_falls_back_to_the_model():
     likelihood, and numpyro can evaluate the observed sites on the draws."""
     trace = _trace(1e3, with_log_likelihood=False)
 
-    got = util.get_max_loglike(trace, model_fn=_model(1e3))
+    got, _ = util.get_max_loglike(trace, model_fn=_model(1e3))
 
     expected = max(_log_likelihood_by_hand(w) for w in WEIGHTS.reshape(-1, 2))
     assert got == pytest.approx(expected, abs=1e-6)
@@ -176,7 +176,7 @@ def test_the_fallback_evaluates_the_model_rather_than_reusing_deterministics():
         sample_stats={'lp': np.zeros((2, 3))},
     )
 
-    got = util.get_max_loglike(trace, model_fn=_model(1e3))
+    got, _ = util.get_max_loglike(trace, model_fn=_model(1e3))
 
     expected = max(_log_likelihood_by_hand(w) for w in WEIGHTS.reshape(-1, 2))
     assert got == pytest.approx(expected, abs=1e-6)

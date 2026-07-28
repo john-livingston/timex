@@ -7,7 +7,13 @@ import hashlib
 import json
 import os
 
-FORMAT_VERSION = 1
+# bump whenever a change alters the numbers an artifact holds without altering
+# the config or the data bytes the keys are computed from. Version 2 marks the
+# sqrt(pi/2) inflation of median binned errors in util.bin_df and the switch of
+# the information criteria to the maximized likelihood: an out/ directory
+# written before those changes hashes identically, so only this version stops
+# its map.pkl and trace.nc from being reused under the new definitions.
+FORMAT_VERSION = 2
 
 # keys that affect sampling only, never the model or the MAP solution
 RUN_TIER = frozenset({'tune', 'draws', 'chains'})

@@ -213,7 +213,7 @@ class TransitFit:
                 read_fn = io.read_afphot
             else:
                 raise ValueError("format must be 'generic' or 'afphot'")
-            x, y, yerr, X, texp, x_hr, ref_time = read_fn(
+            x, y, yerr, X, texp, x_hr, ref_time, ncols = read_fn(
                 fp, 
                 binsize=data[n]['binsize'],
                 spline=data[n]['spline'],
@@ -230,7 +230,11 @@ class TransitFit:
             logging.info(f'loading data: {fn}')
             logging.info(f'data span: {data_iso[0]} - {data_iso[1]}')
             logging.info(f'ref. time: {ref_time}')
-            self.data[n] = dict(x=x, y=y, yerr=yerr, X=X, texp=texp, x_hr=x_hr, band=b, ref_time=ref_time)
+            # ncols records how many design matrix columns each block
+            # contributed, so consumers can slice X by block instead of
+            # re-deriving the sizes from the config, which cannot see the
+            # chunk offset columns appended last
+            self.data[n] = dict(x=x, y=y, yerr=yerr, X=X, texp=texp, x_hr=x_hr, band=b, ref_time=ref_time, ncols=ncols)
             self.masks[n] = None
         ref_times = [v['ref_time'] for k,v in self.data.items()]
         self.ref_time = min(ref_times)

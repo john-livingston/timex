@@ -60,6 +60,25 @@ def gapped_lc_aux(tmp_path):
 
 
 @pytest.fixture
+def gapped_lc(tmp_path):
+    """The same two blocks as gapped_lc_aux, with no auxiliary columns.
+
+    A design matrix built from this holds only the blocks the config names
+    plus the chunk offsets, so the column count exceeds what the config
+    accounts for while there is no covariate at all.
+    """
+    t = 2460000.0 + np.array([0.0, .01, .02, .03, .10, .11, .12, .13])
+    n = len(t)
+    fp = tmp_path / 'gapped.csv'
+    pd.DataFrame({
+        'time': t,
+        'flux': 1.0 + np.arange(n) * 1e-4,
+        'fluxerr': np.full(n, 1e-3),
+    }).to_csv(fp, index=False)
+    return str(fp)
+
+
+@pytest.fixture
 def map_soln():
     """A minimal MAP solution dict: one dataset named 'g', 100 points, 1 planet.
 

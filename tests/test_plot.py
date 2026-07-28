@@ -197,6 +197,54 @@ def test_systematics_covariate_panel_shows_only_the_covariate(gapped_lc_aux):
         (np.arange(8) - 3.5) / np.sqrt(42 / 8), rel=1e-9)
 
 
+def _fit_without_covariates(fp):
+    """A fit stub over a real read_generic design matrix holding a trend, a
+    spline and two chunk offsets, and no covariate at all.
+
+    Counting covariates as the columns the config cannot account for gives
+    8 - (1 trend + 5 spline + 0 bias) = 2, the chunk offsets, so it reports
+    covariates that do not exist.
+    """
+    from timex import io
+
+    x, _, _, X, _, _, _, layout = io.read_generic(
+        fp, binsize=None, trend=1, spline=True, spline_knots=5,
+        chunk_offset=True, chunk_thresh=0.02, verbose=False)
+
+    class _Fit:
+        use_gp = False
+        masks = {'g': None}
+        map_soln = {'g_weights': np.arange(X.shape[1], dtype=float)}
+        data = {'g': dict(x=x, X=X, ncols=layout, band='g')}
+        fit_params = {'data': {'g': dict(trend=1, spline=True, spline_knots=5,
+                                         add_bias=False, chunk_offset=True,
+                                         chunk_thresh=0.02)}}
+
+    return _Fit()
+
+
+def test_systematics_draws_no_covariate_panel_when_there_are_no_covariates(gapped_lc):
+    """Whether a covariates panel is drawn decides how many panels there are
+    and which column each of the others lands in.
+
+    The chunk offsets are appended after every block the config names, so a
+    dataset with a trend and no covariate still has more columns than the
+    config accounts for. Reading that difference as a covariate count opens an
+    empty leading panel and pushes the trend, the spline and the sum one
+    column right.
+    """
+    import matplotlib.pyplot as plt
+    from timex import plot
+
+    fig = plot.systematics(_fit_without_covariates(gapped_lc), 'g', style=2)
+    try:
+        titles = [ax.get_title() for ax in fig.axes]
+    finally:
+        plt.close(fig)
+
+    assert titles == ['trend', 'spline', 'sum']
+
+
 def test_systematics_draws_the_gp_when_there_is_no_design_matrix():
     """A GP only fit has no design matrix, and so no {name}_weights site
     either, so reading X.shape or that key raises.

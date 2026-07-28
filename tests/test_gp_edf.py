@@ -116,6 +116,7 @@ def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
     tf.data = {}
     tf.masks = {}
     tf.gp_config = None
+    tf.model_fn = None
 
     class _FakeStacked:
         data_vars = {}  # no 't0' entry -> save_results takes the fixed-t0 branch
@@ -130,6 +131,7 @@ def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
     tf.trace = _FakeTrace()
 
     monkeypatch.setattr(fit.util, 'get_map_soln', lambda trace: ({}, -1.0))
+    monkeypatch.setattr(fit.util, 'get_max_loglike', lambda trace, model_fn=None: -1.0)
     monkeypatch.setattr(fit.TransitFit, '_count_params', lambda self: 3)
     monkeypatch.setattr(fit.TransitFit, '_count_data', lambda self: 50)
 

@@ -89,6 +89,51 @@ def get_map_soln(trace):
             soln[k] = val
     return soln, float(np.nanmax(lp_values))
 
+def get_max_loglike(trace, model_fn=None):
+    """Maximized log likelihood over the posterior draws.
+
+    BIC, AIC and AICc are defined in terms of the maximized likelihood, so the
+    log probability carried in sample_stats is the wrong quantity: it is the
+    joint log posterior, and it adds every prior term and the unconstraining
+    Jacobian. The systematics weight prior alone contributes several units per
+    design matrix column, enough to decide a detrending comparison, and its
+    width is a constant in model.py rather than a modelling choice.
+
+    az.from_numpyro fills the log_likelihood group from the observed sites, so
+    that group is used when present. A trace saved without it is evaluated
+    against model_fn instead. The GP branch's observed site carries one
+    multivariate log probability per draw and the plain branch carries one per
+    point, so both are summed over whatever dimensions they have beyond chain
+    and draw, then summed across sites and maximized over draws.
+    """
+    log_like = None
+    if 'log_likelihood' in trace.groups():
+        log_like = {k: np.asarray(v.values)
+                    for k, v in trace.log_likelihood.data_vars.items()}
+    if not log_like:
+        if model_fn is None:
+            raise ValueError(
+                'trace has no log_likelihood group and no model_fn was given, '
+                'so the likelihood needed for the information criteria cannot '
+                'be evaluated'
+            )
+        from numpyro.infer.util import log_likelihood as numpyro_log_likelihood
+        # the posterior carries the deterministic sites too, and numpyro would
+        # substitute them for the model's own computation
+        samples = {k: np.asarray(v.values)
+                   for k, v in trace.posterior.data_vars.items()
+                   if not k.endswith(DERIVED_SUFFIXES)}
+        log_like = {k: np.asarray(v) for k, v in
+                    numpyro_log_likelihood(model_fn, samples, batch_ndims=2).items()}
+
+    total = None
+    for arr in log_like.values():
+        # dimensions past chain and draw are the observation dimensions
+        per_draw = arr.sum(axis=tuple(range(2, arr.ndim))) if arr.ndim > 2 else arr
+        total = per_draw if total is None else total + per_draw
+    return float(np.nanmax(total))
+
+
 def get_var_names(data, bands, fit_basis, use_gp, fixed,
                   chromatic=False, log_sigma=True, weights=False, gp_config=None):
 
@@ -291,14 +336,18 @@ def count_free_params(soln):
                if not k.endswith(DERIVED_SUFFIXES))
 
 
-def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
+def compute_ic(map_soln, max_loglike, nparams, ndata, method='BIC', verbose=True):
+    """Information criterion from the maximized log likelihood.
 
+    max_loglike is the likelihood, not the joint log posterior: see
+    get_max_loglike.
+    """
     if method == 'BIC':
-        ic = -2 * max_logp + nparams * np.log(ndata)
+        ic = -2 * max_loglike + nparams * np.log(ndata)
     elif method == 'AIC':
-        ic = 2 * nparams - 2 * max_logp
+        ic = 2 * nparams - 2 * max_loglike
     elif method == 'AICc':
-        ic = 2 * nparams - 2 * max_logp
+        ic = 2 * nparams - 2 * max_loglike
         denom = ndata - nparams - 1
         if denom <= 0:
             logging.warning(
@@ -311,7 +360,7 @@ def compute_ic(map_soln, max_logp, nparams, ndata, method='BIC', verbose=True):
     if verbose:
         print('Number of datapoints: {}'.format(ndata))
         print('Number of parameters: {}'.format(nparams))
-        print('Max logp = {}'.format(max_logp))
+        print('Max log likelihood = {}'.format(max_loglike))
         print('{} = {}'.format(method, ic))
 
     return float(ic)

@@ -459,10 +459,11 @@ class TransitFit:
         plt.savefig(os.path.join(self.outdir, fn))
 
     def get_ic(self, ic='BIC', verbose=False):
-        soln, max_logp = util.get_map_soln(self.trace)
+        soln, _ = util.get_map_soln(self.trace)
+        max_loglike = util.get_max_loglike(self.trace, model_fn=self.model_fn)
         nparams = self._count_params()
         ndata = self._count_data()
-        return util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=verbose)
+        return util.compute_ic(soln, max_loglike, nparams, ndata, method=ic, verbose=verbose)
 
     def _count_params(self):
         """Count free parameters from MAP solution, excluding deterministics and observed."""
@@ -794,13 +795,16 @@ class TransitFit:
         with open(os.path.join(self.outdir, 'tc.txt'), 'w') as f:
             for line in lines:
                 f.write(f'{line}\n')
+        # the criteria are defined in terms of the maximized likelihood, so the
+        # log posterior get_map_soln reports alongside the MAP is not it
+        max_loglike = util.get_max_loglike(self.trace, model_fn=self.model_fn)
         with open(os.path.join(self.outdir, 'ic.txt'), 'w') as f:
-            soln, max_logp = util.get_map_soln(self.trace)
+            soln, _ = util.get_map_soln(self.trace)
             nparams = self._count_params()
             ndata = self._count_data()
             ics = 'BIC AIC AICc'.split()
             for ic in ics:
-                val = util.compute_ic(soln, max_logp, nparams, ndata, method=ic, verbose=False)
+                val = util.compute_ic(soln, max_loglike, nparams, ndata, method=ic, verbose=False)
                 f.write(f'{ic} {val:.2f}\n')
 
             # a GP is charged for its hyperparameters but absorbs far more
@@ -822,7 +826,7 @@ class TransitFit:
                         f.write(f'nparams {nparams}\n')
                         f.write(f'nparams_edf {nparams_edf:.2f}\n')
                         for ic in ics:
-                            val = util.compute_ic(soln, max_logp, nparams_edf, ndata,
+                            val = util.compute_ic(soln, max_loglike, nparams_edf, ndata,
                                                   method=ic, verbose=False)
                             f.write(f'{ic}_edf {val:.2f}\n')
                 except Exception as e:

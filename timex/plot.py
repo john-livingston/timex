@@ -518,7 +518,9 @@ def light_curve(data, name, soln, nplanets, mask=None, trace=None, use_gp=False,
             scale = 10**log_scale
             kernel = c2np_terms.Matern32Term(sigma=amp, rho=scale)
             residuals = y[mask] - (tra_mod + sys_mod)
-            diag = np.exp(2*lcjit) + yerr[mask]**2
+            # lcjit is already exp(log_sigma_lc), so the model's
+            # exp(2*log_sigma_lc) diagonal is lcjit**2
+            diag = lcjit**2 + yerr[mask]**2
             gp = C2NumpyGP(kernel)
             gp.compute(x[mask], diag=diag)
             gp_mod = gp.predict(residuals)

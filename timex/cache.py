@@ -89,12 +89,26 @@ def read_manifest(outdir):
     return manifest
 
 
+def _replace_manifest(outdir, manifest):
+    """Overwrite the manifest without ever leaving it truncated.
+
+    Opening the real path for writing empties it before json.dump runs, and a
+    crash in that window loses every entry, including a trace.nc that cost
+    hours. Building a sibling and renaming means the manifest is either the
+    old one or the new one.
+    """
+    fp = manifest_path(outdir)
+    tmp = f'{fp}.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+    os.replace(tmp, fp)
+
+
 def write_manifest(outdir, artifact, key):
     """Record that `artifact` was written under `key`, preserving other entries."""
     manifest = read_manifest(outdir) or {'format_version': FORMAT_VERSION}
     manifest[artifact] = key
-    with open(manifest_path(outdir), 'w') as f:
-        json.dump(manifest, f, indent=2, sort_keys=True)
+    _replace_manifest(outdir, manifest)
 
 
 def is_valid(manifest, artifact, expected_key):
@@ -116,5 +130,4 @@ def drop_entry(outdir, artifact):
     if not manifest or artifact not in manifest:
         return
     del manifest[artifact]
-    with open(manifest_path(outdir), 'w') as f:
-        json.dump(manifest, f, indent=2, sort_keys=True)
+    _replace_manifest(outdir, manifest)

@@ -29,21 +29,74 @@ def test_bin_df_median_error_carries_the_median_inflation_factor():
     assert np.allclose(binned['fluxerr'].values, 0.0280250, atol=1e-6)
 
 
-def test_bin_df_flux_is_bin_median():
-    n = 40
-    binsize = 60 / 86400.
-    t = np.linspace(0, 2 * binsize, n, endpoint=False)
-    df = pd.DataFrame({
+def _skewed_bins(n_bins=3, per_bin=5):
+    """Bins of five points holding four copies of 1.0 and one copy of 20.0.
+
+    Every bin's median is 1.0 and every bin's mean is (4*1 + 20)/5 = 4.8, so
+    the two branches of bin_df cannot be confused for one another. Times sit at
+    0.1 .. 0.5 inside unit bins so np.digitize gives each bin exactly five
+    points and no point lands on a bin edge.
+    """
+    offsets = np.linspace(0.1, 0.5, per_bin)
+    t = (np.arange(n_bins)[:, None] + offsets[None, :]).ravel()
+    return pd.DataFrame({
         'time': t,
-        'flux': np.arange(n, dtype=float),
-        'fluxerr': np.full(n, 0.01),
+        'flux': np.tile([1.0, 1.0, 1.0, 1.0, 20.0], n_bins),
+        'fluxerr': np.full(t.size, 0.01),
     })
 
-    binned = util.bin_df(df, 'time', 'fluxerr', binsize=binsize)
 
-    bins = np.arange(df['time'].min(), df['time'].max(), binsize)
-    expected = df.groupby(np.digitize(df['time'], bins))['flux'].median()
-    assert np.allclose(binned['flux'].values, expected.dropna().values)
+def test_bin_df_flux_is_bin_median_by_default():
+    """kind defaults to 'median', and the default is what every read time call
+    in io.py uses. Hand derived: the median of each bin is 1.0, where the mean
+    would be 4.8, so swapping the branches or changing the default is visible.
+    """
+    binned = util.bin_df(_skewed_bins(), 'time', 'fluxerr', binsize=1.0)
+
+    assert len(binned) == 3
+    assert np.allclose(binned['flux'].values, 1.0)
+
+
+def test_bin_df_median_default_survives_a_single_ruined_frame():
+    """Why the default is the median. Binning happens at read time, before any
+    outlier clipping can help, so one bad frame in a bin would otherwise carry
+    into the fit. Hand derived on ten points, nine at 1.0 and one at 1.5: the
+    median is 1.0 exactly and the mean is (9 + 1.5)/10 = 1.05.
+    """
+    t = 0.1 * np.arange(1, 11)
+    flux = np.full(10, 1.0)
+    flux[0] = 1.5
+    df = pd.DataFrame({'time': t, 'flux': flux, 'fluxerr': np.full(10, 0.01)})
+    kwargs = dict(timecol='time', errcol='fluxerr', binsize=1.0)
+
+    assert util.bin_df(df, kind='median', **kwargs)['flux'].iloc[0] == \
+        pytest.approx(1.0, abs=1e-12)
+    assert util.bin_df(df, kind='mean', **kwargs)['flux'].iloc[0] == \
+        pytest.approx(1.05, abs=1e-12)
+
+
+@pytest.mark.parametrize('kind,expected', [
+    # median(err)/sqrt(5) = 0.01/2.2360680 = 0.0044721360
+    ('mean', 0.004472135954999579),
+    # and the same, inflated by sqrt(pi/2) for the median branch
+    ('median', 0.0056049912163979275),
+])
+def test_bin_df_error_is_the_bin_median_error_not_its_mean(kind, expected):
+    """The per point error entering the sqrt(N) average is the bin's median
+    error in both branches, for the same reason the flux is: one ruined frame
+    must not set the error of its whole bin. Hand derived on five points with
+    errors 0.01, 0.01, 0.01, 0.01, 0.10, whose median is 0.01 and whose mean is
+    0.028, a factor of 2.8 apart.
+    """
+    df = pd.DataFrame({
+        'time': np.linspace(0.1, 0.5, 5),
+        'flux': np.ones(5),
+        'fluxerr': np.array([0.01, 0.01, 0.01, 0.01, 0.10]),
+    })
+
+    binned = util.bin_df(df, 'time', 'fluxerr', binsize=1.0, kind=kind)
+
+    assert binned['fluxerr'].iloc[0] == pytest.approx(expected, rel=1e-12)
 
 
 def test_bin_df_mean_flux_and_median_error():
@@ -289,21 +342,39 @@ def test_get_var_names_includes_free_t0():
 
 
 def test_format_tc_lines_from_samples_single_planet():
-    samples = np.full(100, 0.25)
+    """tc.txt reports the posterior mean plus ref_time and the posterior width.
+
+    Hand derived on samples 0.4, 0.5, 0.6: the mean is 0.5 and the population
+    standard deviation is sqrt(0.02/3) = 0.0816496580927726. The sample
+    standard deviation would be sqrt(0.02/2) = 0.1 and the variance would be
+    0.00667, so the reported uncertainty pins which statistic is used.
+    """
+    samples = np.array([0.4, 0.5, 0.6])
     lines = util.format_tc_lines(['b'], 2460000.0, t0_samples=samples)
     assert len(lines) == 1
     planet, tc, unc = lines[0].split()
     assert planet == 'b'
-    assert float(tc) == 2460000.25
-    assert float(unc) == 0.0
+    assert float(tc) == pytest.approx(2460000.5, abs=1e-9)
+    assert float(unc) == pytest.approx(0.0816496580927726, rel=1e-9)
 
 
 def test_format_tc_lines_from_samples_two_planets():
-    samples = np.vstack([np.full(50, 0.1), np.full(50, 0.2)])
+    """Each planet gets its own row from its own samples. Hand derived: planet
+    b has mean 0.5 and width sqrt(0.02/3), planet c has mean 1.2 and exactly
+    twice that width. Transposing the array swaps the rows, and pooling all six
+    samples gives both planets the same mean of 0.85.
+    """
+    samples = np.array([[0.4, 0.5, 0.6], [1.0, 1.2, 1.4]])
     lines = util.format_tc_lines(['b', 'c'], 2460000.0, t0_samples=samples)
     assert len(lines) == 2
-    assert float(lines[0].split()[1]) == 2460000.1
-    assert float(lines[1].split()[1]) == 2460000.2
+
+    assert lines[0].split()[0] == 'b'
+    assert float(lines[0].split()[1]) == pytest.approx(2460000.5, abs=1e-9)
+    assert float(lines[0].split()[2]) == pytest.approx(0.0816496580927726, rel=1e-9)
+
+    assert lines[1].split()[0] == 'c'
+    assert float(lines[1].split()[1]) == pytest.approx(2460001.2, abs=1e-9)
+    assert float(lines[1].split()[2]) == pytest.approx(0.1632993161855452, rel=1e-9)
 
 
 def test_format_tc_lines_from_fixed_value():
@@ -372,18 +443,63 @@ def test_get_map_soln_preserves_vector_variables():
     assert np.allclose(soln['v'], [4.0, 5.0, 6.0, 7.0])
 
 
-def test_get_outlier_mask_without_mean_site(map_soln):
-    # include_mean=False means model_fn never creates a {name}_mean site;
-    # get_outlier_mask must tolerate that the same way model.py does
-    del map_soln['g_mean']
-    n = 100
-    x = np.linspace(0.0, 0.1, n)
-    y = np.zeros(n)
+def _clip_fixture():
+    """21 points alternating +/-1 with a single 20 sigma spike at index 10.
 
-    mask = util.get_outlier_mask(x, y, 'g', map_soln, use_gp=False)
+    Against a zero model the residual squares are 1 at twenty points and 400 at
+    the spike, so the robust rms is sqrt(median) = 1 and at nsig=7 the spike is
+    the only point outside the threshold. The mean of the squares is 420/21 =
+    20, giving an rms of 4.47 and a threshold of 31.3 that keeps the spike, so
+    this fixture separates median(resid**2) from mean(resid**2).
+    """
+    n = 21
+    x = np.arange(n, dtype=float)
+    y = np.where(np.arange(n) % 2 == 0, 1.0, -1.0)
+    y[10] = 20.0
+    return x, y, n
+
+
+def test_get_outlier_mask_uses_the_robust_rms():
+    """A single bad frame must not set the scale it is judged against. Using
+    the mean of the squared residuals lets the spike inflate its own threshold
+    and every point survives, which is clipping that quietly does nothing.
+    """
+    x, y, n = _clip_fixture()
+    soln = {'g_light_curves': np.zeros(n)}
+
+    mask = util.get_outlier_mask(x, y, 'g', soln, use_gp=False)
+
+    assert not mask[10], 'the 20 sigma spike was not clipped'
+    assert mask.sum() == 20, 'only the spike may be clipped'
+
+
+def test_get_outlier_mask_without_mean_site():
+    # include_mean=False means model_fn never creates a {name}_mean site;
+    # get_outlier_mask must tolerate that the same way model.py does, and
+    # treating it as zero is what makes the spike above the outlier
+    x, y, n = _clip_fixture()
+    soln = {'g_light_curves': np.zeros(n)}
+
+    mask = util.get_outlier_mask(x, y, 'g', soln, use_gp=False)
 
     assert mask.shape == (n,)
     assert mask.dtype == bool
+    assert mask.sum() == 20
+
+
+def test_get_outlier_mask_subtracts_the_mean_before_clipping():
+    """The control for the guard above: a missing mean is zero, but a present
+    one has to be used. At a mean of 20 the spike becomes the typical point and
+    the ordinary points become the large residuals, so the median of the squares
+    is 19**2 and nothing is far enough out to clip. Ignoring the mean instead of
+    defaulting it would clip index 10 here.
+    """
+    x, y, n = _clip_fixture()
+    soln = {'g_light_curves': np.zeros(n), 'g_mean': np.array(20.0)}
+
+    mask = util.get_outlier_mask(x, y, 'g', soln, use_gp=False)
+
+    assert mask.all()
 
 
 def test_get_map_soln_ignores_nan_logp():
@@ -446,21 +562,69 @@ def test_aicc_is_nan_when_denominator_is_not_positive(caplog):
     assert '50' in caplog.text
 
 
-def test_aicc_is_finite_when_denominator_is_positive():
+def test_bic_penalty_counts_the_data_not_the_parameters():
+    """These are the numbers written to ic.txt, so the formula has to be pinned
+    by value. Hand derived: -2*(-100) + 3*ln(100) = 200 + 13.8155105579643.
+    Reading log(nparams) instead gives 200 + 3*ln(3) = 203.30, and dropping the
+    factor of 2 on the likelihood gives 113.82.
+    """
     from timex import util
 
-    ic = util.compute_ic({}, -100.0, nparams=10, ndata=100,
-                         method='AICc', verbose=False)
-    assert np.isfinite(ic)
+    assert util.compute_ic({}, -100.0, nparams=3, ndata=100,
+                           method='BIC', verbose=False) == \
+        pytest.approx(213.8155105579643, abs=1e-9)
+
+
+def test_aic_penalty_is_twice_the_parameter_count():
+    """Hand derived: 2*3 - 2*(-100) = 206. A penalty of nparams rather than
+    2*nparams gives 203, and AIC would then rank models like a half strength
+    BIC without anything saying so.
+    """
+    from timex import util
+
+    assert util.compute_ic({}, -100.0, nparams=3, ndata=100,
+                           method='AIC', verbose=False) == \
+        pytest.approx(206.0, abs=1e-9)
+
+
+def test_aicc_adds_the_small_sample_correction_to_aic():
+    """Hand derived: AIC 206 + 2*(3**2 + 3)/(100 - 3 - 1) = 206 + 24/96 =
+    206.25. Flipping nparams**2 + nparams to a difference gives 206.125, and
+    dropping the leading 2 gives 206.125 as well, so the value is what
+    separates them from the correct formula.
+    """
+    from timex import util
+
+    assert util.compute_ic({}, -100.0, nparams=3, ndata=100,
+                           method='AICc', verbose=False) == \
+        pytest.approx(206.25, abs=1e-9)
+
+
+def test_aicc_is_finite_just_above_the_denominator_boundary():
+    """The control for the nan guard: at ndata - nparams - 1 = 1 the criterion
+    is still defined, so the guard must not be satisfiable by returning nan for
+    every small sample. Hand derived: 206 + 2*12/1 = 230.
+    """
+    from timex import util
+
+    assert util.compute_ic({}, -100.0, nparams=3, ndata=5,
+                           method='AICc', verbose=False) == \
+        pytest.approx(230.0, abs=1e-9)
 
 
 def test_bic_and_aic_unaffected_by_the_aicc_guard():
+    """nparams=50 against ndata=50 is where AICc returns nan, and BIC and AIC
+    are defined there. Hand derived: BIC 200 + 50*ln(50) = 395.6011502714073,
+    AIC 2*50 + 200 = 300.
+    """
     from timex import util
 
-    for method in ('BIC', 'AIC'):
-        ic = util.compute_ic({}, -100.0, nparams=50, ndata=50,
-                             method=method, verbose=False)
-        assert np.isfinite(ic)
+    assert util.compute_ic({}, -100.0, nparams=50, ndata=50,
+                           method='BIC', verbose=False) == \
+        pytest.approx(395.6011502714073, abs=1e-9)
+    assert util.compute_ic({}, -100.0, nparams=50, ndata=50,
+                           method='AIC', verbose=False) == \
+        pytest.approx(300.0, abs=1e-9)
 
 
 def test_compute_ic_rejects_an_unknown_method():

@@ -377,6 +377,20 @@ def test_format_tc_lines_from_samples_two_planets():
     assert float(lines[1].split()[2]) == pytest.approx(0.1632993161855452, rel=1e-9)
 
 
+def test_format_tc_lines_rejects_samples_that_do_not_match_the_planets():
+    """Reshaping a mismatched array interleaves the planets instead of failing.
+
+    These samples are one row per draw rather than one row per planet: planet b
+    near 0.05 and planet c near 100.05. Reshaped to two rows of three they come
+    out as [0.05, 100.05, 0.06] and [100.06, 0.07, 100.07], so tc.txt reports
+    33.4 and 66.7, transit times neither planet has, with a width of 47 days.
+    """
+    samples = np.array([[0.05, 100.05], [0.06, 100.06], [0.07, 100.07]])
+
+    with pytest.raises(ValueError):
+        util.format_tc_lines(['b', 'c'], 2460000.0, t0_samples=samples)
+
+
 def test_format_tc_lines_from_fixed_value():
     lines = util.format_tc_lines(['b'], 2460000.0, t0_fixed=np.array([0.5]))
     assert lines == ['b 2460000.5 0.0']

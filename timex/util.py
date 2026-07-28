@@ -350,9 +350,13 @@ def bin_df(df, timecol='time', errcol='flux_err', binsize=60/86400., kind='media
         # understates a binned median by about 20 percent. the true ratio is
         # below the asymptote at small N, and lower again at even N because the
         # median then averages the two middle order statistics: 1.09 at N=4,
-        # 1.22 at N=9, 1.18 at N=10, 1.20 at N=16, 1.24 at N=25. so this
-        # overcorrects by 1.5 to 15 percent and leaves binned errors mildly
-        # conservative, which is the safe direction to be wrong in
+        # 1.22 at N=9, 1.18 at N=10, 1.20 at N=16, 1.24 at N=25. at N=1 and
+        # N=2 the median is the mean, so the true ratio is exactly 1 and the
+        # full sqrt(pi/2) is overcorrection; real files reach this, a 2 minute
+        # binning of the shipped g band leaves one bin holding two points. so
+        # this overcorrects by 1.5 percent at N=25 and up to 25 percent at N=1
+        # or 2, leaving binned errors mildly conservative, which is the safe
+        # direction to be wrong in
         err = err * np.sqrt(np.pi / 2)
     else:
         # the binned point is the mean, whose standard error needs no inflation
@@ -426,7 +430,14 @@ def format_tc_lines(planets, ref_time, t0_samples=None, t0_fixed=None):
     if t0_samples is not None:
         samps = np.atleast_2d(t0_samples)
         if samps.shape[0] != len(planets):
-            samps = samps.reshape(len(planets), -1)
+            # reshaping to (nplanets, -1) would not transpose a (ndraw,
+            # nplanets) array, it would interleave the planets: each output
+            # row then mixes draws from both, and every reported transit time
+            # lands somewhere between them with a width spanning the gap
+            raise ValueError(
+                f'expected one row of t0 samples per planet, got shape '
+                f'{samps.shape} for {len(planets)} planet(s)'
+            )
         for i, planet in enumerate(planets):
             lines.append(f'{planet} {samps[i].mean() + ref_time} {samps[i].std()}')
     else:

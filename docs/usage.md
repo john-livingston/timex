@@ -120,8 +120,19 @@ or spline systematics model, any flare or bump term, and the GP prediction)
 subtracted from the data, converted from ppt, with the baseline restored to 1.
 
 `yerr` is the photometric error and the fitted jitter added in quadrature,
-`sqrt(yerr**2 + exp(2*log_sigma_lc))`, converted from ppt. This is the error
-the likelihood weights each point by, and it is the wider of the two error bars
-`fit.png` draws, so a refit of the published file sees the same scatter the
-original fit did. It is not the photometric error from the input file: the
-fitted jitter routinely exceeds it, so these bars are wider.
+`sqrt(yerr**2 + exp(2*log_sigma_lc))`, converted from ppt. It is not the
+photometric error from the input file: the fitted jitter routinely exceeds it,
+so these bars are wider, and a refit of the published file sees a scatter close
+to the one the original fit did.
+
+Two details are worth knowing before comparing the file against a figure or a
+likelihood:
+
+- The jitter here is the one at the maximum posterior draw, while the wider of
+  the two error bars `fit.png` draws uses the posterior median of
+  `log_sigma_lc`. The two estimators can differ by tens of percent on a given
+  dataset, so the published column and the drawn bar are close but not equal.
+- Without a GP this is exactly the weight the likelihood gave each point. With
+  a GP the likelihood weights by the full covariance `K + S`, and only the
+  diagonal `S` is published, so the file carries none of the correlated noise
+  the fit accounted for.

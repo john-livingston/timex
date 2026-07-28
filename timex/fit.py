@@ -820,7 +820,7 @@ class TransitFit:
                         self.map_soln, self.data, self.masks, self.gp_config)
                     if edf_by_dataset is not None:
                         edf = sum(edf_by_dataset.values())
-                        n_gp_hyper = sum(1 for k in self.map_soln if k.startswith('gp_log_'))
+                        n_gp_hyper = util.count_gp_hyper(self.map_soln)
                         nparams_edf = nparams - n_gp_hyper + edf
                         f.write(f'edf {edf:.2f}\n')
                         f.write(f'nparams {nparams}\n')

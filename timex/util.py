@@ -319,21 +319,54 @@ def bin_df(df, timecol='time', errcol='flux_err', binsize=60/86400., kind='media
     errcol : name of column with measurement errors
     binsize : size of bins (same units as time column)
     kind : median of points in each bin if set to 'median', else mean
+
+    The binned error is the bin's median point error over sqrt(N), inflated by
+    sqrt(pi/2) when the binned point is a median.
     """
     bins = np.arange(df[timecol].min(), df[timecol].max(), binsize)
     groups = df.groupby(np.digitize(df[timecol], bins))
+    # the per point error is the bin's median error either way: binning happens
+    # at read time, before any outlier clipping, so one ruined frame must not
+    # set the error of its whole bin
+    err = groups[errcol].median() / np.sqrt(groups.size())
     if kind == 'median':
         df_binned = groups.median()
+        # the median of a Gaussian sample scatters more than its mean, by
+        # sqrt(pi/2) = 1.2533 asymptotically, so the standard error of the mean
+        # understates a binned median by about 20 percent. the true ratio is
+        # below the asymptote at small N, and lower again at even N because the
+        # median then averages the two middle order statistics: 1.09 at N=4,
+        # 1.22 at N=9, 1.18 at N=10, 1.20 at N=16, 1.24 at N=25. so this
+        # overcorrects by 1.5 to 15 percent and leaves binned errors mildly
+        # conservative, which is the safe direction to be wrong in
+        err = err * np.sqrt(np.pi / 2)
     else:
+        # the binned point is the mean, whose standard error needs no inflation
         df_binned = groups.mean()
-    # bin error is the median point error scaled by sqrt(N) regardless of kind
-    df_binned[errcol] = groups[errcol].median() / np.sqrt(groups.size())
+    df_binned[errcol] = err
     return df_binned.dropna()
 
 def count_free_params(soln):
     """Count free parameters in a MAP solution dict, excluding derived quantities."""
     return sum(np.size(v) for k, v in soln.items()
                if not k.endswith(DERIVED_SUFFIXES))
+
+
+# GP hyperparameter sites are 'gp_log_amp'/'gp_log_scale' when shared, or those
+# names suffixed with the dataset name when gp.per_dataset asks for them. The
+# looser 'gp_log_' prefix would also match the jitter site of a dataset that
+# happens to be named 'gp'.
+GP_HYPER_PREFIXES = ('gp_log_amp', 'gp_log_scale')
+
+
+def count_gp_hyper(soln):
+    """Number of GP hyperparameter elements in a MAP solution dict.
+
+    Elements, not sites, so this stays in the same units as count_free_params
+    if a hyperparameter is ever vector valued.
+    """
+    return sum(np.size(v) for k, v in soln.items()
+               if k.startswith(GP_HYPER_PREFIXES))
 
 
 def compute_ic(map_soln, max_loglike, nparams, ndata, method='BIC', verbose=True):
@@ -356,6 +389,9 @@ def compute_ic(map_soln, max_loglike, nparams, ndata, method='BIC', verbose=True
             )
             return float('nan')
         ic += 2 * (nparams**2 + nparams) / denom
+    else:
+        raise ValueError(
+            f"method must be one of 'BIC', 'AIC' or 'AICc', got {method!r}")
 
     if verbose:
         print('Number of datapoints: {}'.format(ndata))
@@ -407,10 +443,18 @@ def get_corrected(data, name, soln, nplanets, mask=None, subtract_tc=True):
     # subtract every non-transit component, not just the linear model
     sys_mod = get_sys_model(name, soln, int(mask.sum()))
 
+    # the likelihood weights each point by sqrt(yerr**2 + exp(2*log_sigma_lc)),
+    # so the published error has to carry the fitted jitter too. everything
+    # here is in ppt, the units the jitter was fitted in
+    err = yerr[mask]
+    if f'{name}_log_sigma_lc' in soln:
+        log_sigma_lc = float(np.squeeze(soln[f'{name}_log_sigma_lc']))
+        err = np.sqrt(err**2 + np.exp(2*log_sigma_lc))
+
     cor = dict(
         x=x[mask]-offset,
         y=y[mask]-sys_mod,
-        yerr=yerr[mask],
+        yerr=err,
         x_hr=x_hr-offset,
         tra_mod_hr=tra_mod_hr
     )

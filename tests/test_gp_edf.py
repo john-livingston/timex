@@ -92,6 +92,92 @@ def test_returns_none_and_warns_above_max_points(caplog):
     assert str(len(data['g']['x'])) in caplog.text
 
 
+def _save_results_fit(tmp_path, monkeypatch, map_soln, nparams, edf):
+    """A TransitFit carrying only what save_results reads, with the edf and the
+    raw parameter count pinned so ic.txt's nparams_edf row is a pure function
+    of how many GP hyperparameters save_results decides to remove."""
+    from timex import fit
+
+    tf = fit.TransitFit.__new__(fit.TransitFit)
+    tf.outdir = str(tmp_path)
+    tf.planets = 'b'
+    tf.ref_time = 0.0
+    tf.priors = {'t0': 0.1}
+    tf.use_gp = True
+    tf.map_soln = map_soln
+    tf.data = {}
+    tf.masks = {}
+    tf.gp_config = None
+    tf.model_fn = None
+
+    class _FakeStacked:
+        data_vars = {}  # no 't0' entry -> save_results takes the fixed-t0 branch
+
+    class _FakePosterior:
+        def stack(self, **kwargs):
+            return _FakeStacked()
+
+    class _FakeTrace:
+        posterior = _FakePosterior()
+
+    tf.trace = _FakeTrace()
+
+    monkeypatch.setattr(fit.util, 'get_map_soln', lambda trace: ({}, -1.0))
+    monkeypatch.setattr(fit.util, 'get_max_loglike', lambda trace, model_fn=None: -1.0)
+    monkeypatch.setattr(fit.TransitFit, '_count_params', lambda self: nparams)
+    monkeypatch.setattr(fit.TransitFit, '_count_data', lambda self: 500)
+    monkeypatch.setattr(fit.model, 'compute_gp_edf',
+                        lambda soln, data, masks, gp_config: dict(edf))
+    monkeypatch.setattr(fit.TransitFit, 'save_posterior_samples', lambda self: None)
+    monkeypatch.setattr(fit.TransitFit, 'save_corrected', lambda self: None)
+    return tf
+
+
+def _ic_rows(tmp_path):
+    rows = (tmp_path / 'ic.txt').read_text().split('\n')
+    return dict(r.split() for r in rows if r.strip())
+
+
+def test_nparams_edf_does_not_charge_a_dataset_named_gp_as_a_hyperparameter(
+        tmp_path, monkeypatch):
+    """save_results swaps the GP hyperparameters out for the edf. A dataset
+    literally named 'gp' has a jitter site 'gp_log_sigma_lc', which a
+    'gp_log_' prefix match removes as though it were a GP hyperparameter,
+    leaving nparams_edf one parameter short and every corrected criterion
+    biased in favor of the GP model."""
+    map_soln = {
+        'gp_log_amp': np.array([0.0]),
+        'gp_log_scale': np.array([-2.0]),
+        'gp_log_sigma_lc': np.array(-1.0),
+    }
+    tf = _save_results_fit(tmp_path, monkeypatch, map_soln,
+                           nparams=10, edf={'gp': 4.0})
+    tf.save_results()
+
+    rows = _ic_rows(tmp_path)
+    assert float(rows['edf']) == 4.0
+    # 10 parameters, minus the 2 GP hyperparameters, plus 4 edf
+    assert float(rows['nparams_edf']) == 12.0
+
+
+def test_nparams_edf_removes_every_hyperparameter_element(tmp_path, monkeypatch):
+    """Counting sites rather than elements silently undercounts a vector
+    valued hyperparameter, which is what a shared amplitude over several
+    bands would be."""
+    map_soln = {
+        'gp_log_amp': np.zeros(3),
+        'gp_log_scale': np.zeros(3),
+        'g_log_sigma_lc': np.array(-1.0),
+    }
+    tf = _save_results_fit(tmp_path, monkeypatch, map_soln,
+                           nparams=20, edf={'g': 5.0})
+    tf.save_results()
+
+    rows = _ic_rows(tmp_path)
+    # 20 parameters, minus 6 hyperparameter elements, plus 5 edf
+    assert float(rows['nparams_edf']) == 19.0
+
+
 def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
     """compute_gp_edf runs inside save_results' `with open(ic.txt)` block and
     reads GP hyperparameters back out of map_soln. If it raises (e.g. a

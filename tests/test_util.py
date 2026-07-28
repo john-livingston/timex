@@ -5,22 +5,28 @@ import pytest
 from timex import util
 
 
-def test_bin_df_error_is_median_error_over_sqrt_count():
-    n = 60
+def test_bin_df_median_error_carries_the_median_inflation_factor():
+    """A binned point is the median of its bin, and the median of a Gaussian
+    sample scatters more than its mean, so the standard error of the mean
+    understates it. Without the sqrt(pi/2) inflation every binned error in
+    every fit is about 20 percent too small.
+    """
+    n = 20
     binsize = 60 / 86400.
-    t = np.linspace(0, 3 * binsize, n, endpoint=False)
+    t = np.linspace(0, 4 * binsize, n, endpoint=False)
     df = pd.DataFrame({
         'time': t,
         'flux': np.ones(n),
-        'fluxerr': np.full(n, 0.03),
+        'fluxerr': np.full(n, 0.05),
     })
 
     binned = util.bin_df(df, 'time', 'fluxerr', binsize=binsize)
 
-    bins = np.arange(df['time'].min(), df['time'].max(), binsize)
-    groups = df.groupby(np.digitize(df['time'], bins))
-    expected = (groups['fluxerr'].median() / np.sqrt(groups.size())).dropna()
-    assert np.allclose(binned['fluxerr'].values, expected.values)
+    # 4 bins of 5 points, each point carrying an error of 0.05, so the
+    # standard error of the mean is 0.05/sqrt(5) = 0.0223607 and the inflated
+    # median error is sqrt(pi/2) * 0.0223607 = 0.0280250
+    assert len(binned) == 4
+    assert np.allclose(binned['fluxerr'].values, 0.0280250, atol=1e-6)
 
 
 def test_bin_df_flux_is_bin_median():
@@ -56,17 +62,46 @@ def test_bin_df_mean_flux_and_median_error():
 
     binned = util.bin_df(df, 'time', 'fluxerr', binsize=binsize, kind='mean')
 
-    bins = np.arange(df['time'].min(), df['time'].max(), binsize)
-    groups = df.groupby(np.digitize(df['time'], bins))
-    expected_flux_mean = groups['flux'].mean().dropna()
-    expected_flux_median = groups['flux'].median().dropna()
-    expected_err = (groups['fluxerr'].median() / np.sqrt(groups.size())).dropna()
+    # 3 bins of 20 points. each bin holds four copies of the 5 point pattern,
+    # so its mean is (16*1 + 4*20)/20 = 4.8 while its median is 1.0
+    assert len(binned) == 3
+    assert np.allclose(binned['flux'].values, 4.8)
+    # the binned point is the mean here, whose standard error needs no median
+    # inflation: the median point error is 0.03 and sqrt(20) = 4.4721
+    assert np.allclose(binned['fluxerr'].values, 0.00670820, atol=1e-7)
 
-    # confirm the fixture actually distinguishes mean from median in each bin
-    assert not np.allclose(expected_flux_mean.values, expected_flux_median.values)
 
-    assert np.allclose(binned['flux'].values, expected_flux_mean.values)
-    assert np.allclose(binned['fluxerr'].values, expected_err.values)
+def test_bin_df_median_error_matches_the_scatter_of_the_binned_points():
+    """The point of the error column: it has to describe how much a binned
+    point actually moves. Measured against 1500 independent bins of 9 Gaussian
+    draws, the reported error must land on that scatter, slightly high rather
+    than low. The uncorrected standard error of the mean comes out at 0.82 of
+    it, which is the understatement this guards.
+    """
+    sigma = 0.05
+    nbins, per_bin = 1500, 9
+    # unit bins with the 9 points at 0.1 ... 0.9 within each: no point sits
+    # near a bin edge, so every bin holds exactly 9 points
+    offsets = np.arange(1, per_bin + 1) / 10.
+    t = (np.arange(nbins)[:, None] + offsets[None, :]).ravel()
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({
+        'time': t,
+        'flux': rng.normal(0., sigma, t.size),
+        'fluxerr': np.full(t.size, sigma),
+    })
+
+    binned = util.bin_df(df, 'time', 'fluxerr', binsize=1.)
+
+    assert len(binned) == nbins, 'fixture must give every bin the same count'
+    reported = binned['fluxerr'].values
+    assert np.allclose(reported, reported[0]), 'every bin holds 9 equal errors'
+    observed = binned['flux'].values.std(ddof=1)
+    ratio = reported[0] / observed
+    # 1500 bins pin the observed scatter to a few percent; sqrt(pi/2) is the
+    # asymptotic factor and N=9 is short of asymptotic, so a little high is
+    # expected and correct. the uncorrected 0.82 is far outside
+    assert 0.95 < ratio < 1.12, f'reported/observed error ratio was {ratio:.3f}'
 
 
 def test_count_free_params_counts_scalars_and_vectors(map_soln):
@@ -159,6 +194,30 @@ def test_get_corrected_without_linear_model(map_soln):
     cor = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
     # y is zeros, only g_mean = 0.1 is subtracted
     assert np.allclose(cor['y'], -0.1)
+
+
+def test_get_corrected_error_includes_the_fitted_jitter(map_soln):
+    """The likelihood weights each point by sqrt(yerr**2 + exp(2*log_sigma_lc)),
+    and the fitted jitter routinely exceeds the photometric error, so a
+    corrected light curve carrying bare photometric errors understates the
+    scatter anyone refitting it will find.
+    """
+    data = _corrected_data()
+    # g_log_sigma_lc is -1, so the jitter is exp(-1) ppt and its square is
+    # exp(-2) = 0.1353353. with yerr = 0.5 ppt the combined error is
+    # sqrt(0.25 + 0.1353353) = 0.6207538 ppt
+    cor = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
+    assert np.allclose(cor['yerr'], 0.6207538, atol=1e-7)
+
+
+def test_get_corrected_error_without_a_jitter_site(map_soln):
+    """Not every configuration samples a jitter, and get_corrected is also
+    called on solutions loaded from disk, so a missing site must leave the
+    photometric error alone rather than raise."""
+    del map_soln['g_log_sigma_lc']
+    data = _corrected_data()
+    cor = util.get_corrected(data, 'g', map_soln, 1, subtract_tc=False)
+    assert np.allclose(cor['yerr'], 0.5)
 
 
 def test_get_corrected_respects_mask(map_soln):
@@ -402,6 +461,52 @@ def test_bic_and_aic_unaffected_by_the_aicc_guard():
         ic = util.compute_ic({}, -100.0, nparams=50, ndata=50,
                              method=method, verbose=False)
         assert np.isfinite(ic)
+
+
+def test_compute_ic_rejects_an_unknown_method():
+    """Without a final else the if/elif chain falls through with `ic` unbound,
+    so a caller asking for an unsupported criterion gets an UnboundLocalError
+    about a local variable rather than a message naming what it passed."""
+    with pytest.raises(ValueError, match='WAIC'):
+        util.compute_ic({}, -100.0, nparams=3, ndata=50,
+                        method='WAIC', verbose=False)
+
+
+def test_count_gp_hyper_ignores_a_dataset_named_gp():
+    """A dataset called 'gp' has a jitter site 'gp_log_sigma_lc'. Matching on
+    the 'gp_log_' prefix swallows it, so the GP is credited with a
+    hyperparameter that is really that dataset's jitter and the edf corrected
+    parameter count comes out one too low."""
+    soln = {
+        'gp_log_amp': np.array([0.0]),
+        'gp_log_scale': np.array([-2.0]),
+        'gp_log_sigma_lc': np.array(-1.0),
+        'gp_mean': np.array(0.1),
+        't0': np.array([0.05]),
+    }
+    assert util.count_gp_hyper(soln) == 2
+
+
+def test_count_gp_hyper_counts_per_dataset_sites():
+    soln = {
+        'gp_log_amp_g': np.array([0.0]),
+        'gp_log_scale_g': np.array([-2.0]),
+        'gp_log_amp_r': np.array([0.1]),
+        'gp_log_scale_r': np.array([-2.1]),
+        'g_log_sigma_lc': np.array(-1.0),
+    }
+    assert util.count_gp_hyper(soln) == 4
+
+
+def test_count_gp_hyper_counts_elements_not_sites():
+    """nparams elsewhere is a count of elements (see count_free_params), so
+    subtracting a count of sites would mix two different units the moment a
+    hyperparameter becomes vector valued."""
+    soln = {
+        'gp_log_amp': np.zeros(3),
+        'gp_log_scale': np.zeros(3),
+    }
+    assert util.count_gp_hyper(soln) == 6
 
 
 @pytest.mark.parametrize('band,expected', [

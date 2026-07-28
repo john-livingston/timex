@@ -589,6 +589,7 @@ class TransitFit:
 
     def clip_outliers(self, fn=None):
         clipped = False
+        recomputed = False
         include_flare = self.include_flare
         include_bump = self.include_bump
         for name, data in self.data.items():
@@ -602,18 +603,41 @@ class TransitFit:
                     else:
                         current_fn = fn
                     fp = os.path.join(self.outdir, current_fn)
+                    previous = self.masks[name]
                     self.masks[name] = util.get_outlier_mask(
                         x, y, name, map_soln, use_gp,
                         nsig=clip_nsig, include_flare=include_flare, include_bump=include_bump, fp=fp
                         )
+                    recomputed = True
                     n_outliers = self.masks[name].size - self.masks[name].sum()
                     if n_outliers > 0:
                         logging.info(f'clipped {n_outliers} outlier(s)')
+                    # the refit is owed to a masking that moved, not to a mask
+                    # that excludes something. A reclip from a different MAP
+                    # can put a point back, and counting outliers calls that
+                    # zero, so map.pkl would keep the old masking while
+                    # mask.pkl holds the new one, both under one model key.
+                    # no entry means every point kept, so a first clip that
+                    # finds nothing has changed nothing
+                    if previous is None:
+                        previous = np.ones(self.masks[name].size, dtype=bool)
+                    if not np.array_equal(previous, self.masks[name]):
                         clipped = True
-        cache.drop_entry(self.outdir, 'mask.pkl')
-        pickle.dump(self.masks, open(os.path.join(self.outdir, 'mask.pkl'), 'wb'))
-        if self._may_record():
-            cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
+        # a warm resume recomputes nothing, and dropping the entry anyway
+        # leaves mask.pkl on disk with nothing vouching for it if the session
+        # exits before the rewrite, while map.pkl and trace.nc keep theirs
+        if recomputed:
+            if clipped:
+                # retire the MAP's entry before the new mask gets one, not at
+                # the rebuild below: the map.pkl on disk was optimized under
+                # the old masking, and the two share a model key, so between
+                # the two writes both would read as valid while describing
+                # different maskings
+                cache.drop_entry(self.outdir, 'map.pkl')
+            cache.drop_entry(self.outdir, 'mask.pkl')
+            pickle.dump(self.masks, open(os.path.join(self.outdir, 'mask.pkl'), 'wb'))
+            if self._may_record():
+                cache.write_manifest(self.outdir, 'mask.pkl', self._cache_keys['model'])
         if clipped:
             self.build_model(start=self.map_soln, force=True)
             

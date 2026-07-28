@@ -116,7 +116,7 @@ def get_max_loglike(trace, model_fn=None):
     Returns (max_loglike, (chain, draw)). The index is what lets a caller
     evaluate a penalty at the same parameter vector the criterion was
     evaluated at: the likelihood maximizing draw is not the maximum posterior
-    draw self.map_soln holds, and a GP's effective degrees of freedom varies
+    draw get_map_soln selects, and a GP's effective degrees of freedom varies
     by tens of units between the two.
     """
     log_like = None

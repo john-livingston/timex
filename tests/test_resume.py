@@ -543,12 +543,17 @@ def test_from_dir_build_model_does_not_launder_stale_map_under_current_key(wd, c
 
 
 @pytest.mark.slow
-def test_from_dir_sample_does_not_launder_stale_map_when_the_trace_is_fresh(wd, caplog):
-    """Isolates the map.pkl guard at the end of sample from the trace's.
+def test_from_dir_records_nothing_once_anything_was_force_loaded_stale(wd, caplog):
+    """The accepted cost of making the rule session-wide rather than per artifact.
 
-    Removing trace.nc leaves nothing to force-load on the run tier, so MCMC
-    runs from scratch and its trace is recorded normally. Only map.pkl is
-    flagged, so it is the one artifact that must not be recorded.
+    Removing trace.nc leaves only map.pkl to force-load, and the model tier
+    edit makes build_model re-optimize from scratch, so both the MAP and the
+    trace this session produces are genuinely of the current config. Neither
+    is recorded anyway. A stale load is a fact about the session: mask.pkl in
+    particular is reused as-is rather than recomputed, so there is no general
+    way to tell which of the later writes it contaminated. The next ordinary
+    run pays for one recompute, against the alternative of adopting an
+    artifact from another config with no warning at all.
     """
     from timex import cache, fit
 
@@ -565,12 +570,14 @@ def test_from_dir_sample_does_not_launder_stale_map_when_the_trace_is_fresh(wd, 
 
     assert 'loading map.pkl anyway' in caplog.text, 'setup: the MAP must be force-loaded stale'
     assert 'loading trace' not in caplog.text, 'setup: there must be no trace to force-load'
+    assert 'sampling for' in caplog.text, 'setup: MCMC must really have run'
 
     manifest = cache.read_manifest(os.path.join(wd, 'out'))
-    assert manifest.get('trace.nc') == tf._cache_keys['run'], (
-        'the freshly sampled trace is valid, so this test really does isolate map.pkl'
-    )
     assert 'map.pkl' not in manifest, 'a force-loaded stale MAP was re-recorded as valid'
+    assert 'trace.nc' not in manifest, (
+        'a trace sampled in a session that force-loaded a stale artifact was '
+        'vouched for anyway'
+    )
 
 
 @pytest.mark.slow

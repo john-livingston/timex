@@ -311,7 +311,8 @@ class TransitFit:
         if os.path.exists(os.path.join(self.outdir, 'mask.pkl')):
             if self._may_load('mask.pkl', 'model', manifest):
                 logging.info('loading mask(s) from mask.pkl')
-                self.masks = pickle.load(open(os.path.join(self.outdir, 'mask.pkl'), 'rb'))
+                self._merge_saved_masks(
+                    pickle.load(open(os.path.join(self.outdir, 'mask.pkl'), 'rb')))
         if os.path.exists(os.path.join(self.outdir, 'map.pkl')):
             if self._may_load('map.pkl', 'model', manifest):
                 logging.info('loading MAP solution from map.pkl')
@@ -326,6 +327,36 @@ class TransitFit:
             if self._may_load('trace.nc', 'run', manifest):
                 logging.info('loading trace from trace.pkl (legacy)')
                 self.trace = pickle.load(open(os.path.join(self.outdir, 'trace.pkl'), 'rb'))
+
+    def _merge_saved_masks(self, saved):
+        """Fold a loaded mask.pkl into the skeleton load_data built.
+
+        Assigning the loaded dict wholesale drops the `{name: None}` entry
+        load_data makes for every dataset, so a dataset added to fit.yaml
+        since the mask was written has no entry and clip_outliers raises
+        KeyError on it.
+
+        A mask selects points by position, so one written for a different
+        binning or trimming picks the wrong points instead of failing. Length
+        is the only check available here: mask.pkl records nothing about the
+        config it came from, and only the manifest key does, which from_dir
+        is entitled to override.
+        """
+        for name, mask in saved.items():
+            if name not in self.masks:
+                logging.warning(
+                    f'mask.pkl holds a mask for {name}, which is not in the '
+                    f'current config; ignoring it'
+                )
+                continue
+            n = len(self.data[name]['x'])
+            if mask is not None and len(mask) != n:
+                logging.warning(
+                    f'saved mask for {name} covers {len(mask)} points but the '
+                    f'dataset now has {n}; discarding it and reclipping'
+                )
+                continue
+            self.masks[name] = mask
 
     def _add_log_sigma_lc_priors(self):
         """Add log_sigma_lc priors for each dataset based on data std"""

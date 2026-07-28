@@ -1,5 +1,6 @@
 import logging
 import os
+import pickle
 import shutil
 
 import numpy as np
@@ -107,6 +108,82 @@ def test_build_model_still_reuses_a_matching_cached_map(tmp_path, monkeypatch):
     assert cache.read_manifest(str(tmp_path)) is None, (
         'reusing a cached MAP writes nothing, so there is nothing to record'
     )
+
+
+def _bare_loader(tmp_path, lengths):
+    """A TransitFit carrying only what load_saved reads, paused after load_data.
+
+    `lengths` maps each dataset named in fit.yaml to the number of points
+    load_data produced for it; load_data leaves every mask entry None, and
+    that skeleton is what mask.pkl has to be merged into. _force_load_saved
+    is set because a mask.pkl that disagrees with fit.yaml is by definition a
+    key mismatch, so from_dir is the only way to reach the merge at all.
+    """
+    from timex import fit
+
+    (tmp_path / 'a.csv').write_text('time,flux,fluxerr\n1.0,1.0,0.001\n')
+    tf = fit.TransitFit.__new__(fit.TransitFit)
+    tf.wd = str(tmp_path)
+    tf.outdir = str(tmp_path / 'out')
+    os.makedirs(tf.outdir)
+    tf.clobber = False
+    tf._force_load_saved = True
+    tf.fit_params = {'data': {n: dict(file='a.csv', band='g') for n in lengths}}
+    tf.sys_params = {}
+    tf.data = {n: dict(x=np.zeros(k)) for n, k in lengths.items()}
+    tf.masks = {n: None for n in lengths}
+    return tf
+
+
+def _save_masks(tf, masks):
+    with open(os.path.join(tf.outdir, 'mask.pkl'), 'wb') as f:
+        pickle.dump(masks, f)
+
+
+def test_load_saved_keeps_an_empty_mask_slot_for_a_dataset_added_since(tmp_path):
+    """A mask.pkl written before a dataset was added knows nothing about it.
+
+    Replacing the whole dict with the pickled one throws away the skeleton
+    load_data built, and clip_outliers then reads self.masks[name] for a
+    dataset that is not in it.
+    """
+    tf = _bare_loader(tmp_path, {'g': 20, 'r': 20})
+    _save_masks(tf, {'g': np.ones(20, dtype=bool)})
+
+    tf.load_saved()
+
+    assert tf.masks['g'] is not None, 'setup: the saved mask must actually load'
+    assert tf.masks['r'] is None, (
+        'the dataset added since has no mask slot, so clip_outliers raises KeyError'
+    )
+
+
+def test_load_saved_ignores_a_mask_for_a_dataset_no_longer_in_the_config(tmp_path):
+    """The mirror of adding one: the dataset it belongs to is gone.
+
+    There is no self.data entry to size it against, and nothing downstream
+    would ever read it.
+    """
+    tf = _bare_loader(tmp_path, {'g': 20})
+    _save_masks(tf, {'g': np.ones(20, dtype=bool), 'r': np.ones(30, dtype=bool)})
+
+    tf.load_saved()
+
+    assert set(tf.masks) == {'g'}, 'a dataset dropped from the config came back'
+
+
+def test_load_saved_drops_a_mask_that_no_longer_matches_its_dataset_length(tmp_path):
+    """A binsize or trim edit changes how many points a dataset has.
+
+    The mask is positional, so one written for the old binning selects the
+    wrong points rather than failing. Dropping it recomputes instead.
+    """
+    tf = _bare_loader(tmp_path, {'g': 8})
+    _save_masks(tf, {'g': np.ones(10, dtype=bool)})
+
+    tf.load_saved()
+
+    assert tf.masks['g'] is None, 'a mask of 10 points was kept for 8 points of data'
 
 
 def test_a_stale_mask_disqualifies_the_map_built_on_it(tmp_path, monkeypatch):

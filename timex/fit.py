@@ -920,8 +920,10 @@ class TransitFit:
                     # maximum posterior draw and max_loglike comes from the
                     # likelihood maximizing draw, which is a different draw:
                     # on the shipped trace the edf ranges over 24 units across
-                    # draws, and it correlates with the likelihood, so taking
-                    # it from the maximum posterior draw under-penalizes the GP
+                    # draws and correlates with the likelihood, so the two
+                    # draws disagree by more than the overlap correction is
+                    # worth, and systematically rather than by noise. which
+                    # way they disagree depends on the fit
                     ll_soln = util.get_soln_at(self.trace, *ll_index)
                     edf_by_dataset = model.compute_gp_edf(
                         ll_soln, self.data, self.masks, self.gp_config)

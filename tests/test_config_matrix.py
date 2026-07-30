@@ -160,10 +160,20 @@ def test_gp_fit_reports_edf_corrected_ic(tmp_path):
     assert ic['nparams_edf'] == pytest.approx(
         ic['nparams'] - n_gp_hyper + ic['edf'])
 
-    # and the reported edf must be the SUM over datasets, not a mean
-    from timex import model
+    # and the reported edf must be the SUM over datasets, not a mean.
+    #
+    # recompute at the draw save_results used, which is the likelihood
+    # maximizing one. tf.map_soln is the maximum posterior draw instead, and
+    # the two criteria differ by the prior and Jacobian term: on this fixture
+    # that term varies about 2.5 units across draws while the likelihood
+    # separates the top two draws by about 2.7, so which draw wins flips with
+    # the sampling. the edf ranges over tens of units between draws, so
+    # recomputing at map_soln asserts only that the two happened to coincide.
+    from timex import model, util
+    _, ll_index = util.get_max_loglike(tf.trace, model_fn=tf.model_fn)
     edf_by_dataset = model.compute_gp_edf(
-        tf.map_soln, tf.data, tf.masks, tf.gp_config)
+        util.get_soln_at(tf.trace, *ll_index),
+        tf.data, tf.masks, tf.gp_config)
     assert edf_by_dataset is not None
     assert len(edf_by_dataset) == len(tf.data)
     # abs tolerance, not rel: ic.txt writes edf via '{:.2f}', so up to 0.005

@@ -340,3 +340,145 @@ def test_save_results_survives_an_edf_failure(tmp_path, monkeypatch, caplog):
         'save_posterior_samples/save_corrected must still run after an edf failure'
     )
     assert 'KeyError' in caplog.text, 'the warning must name the exception'
+
+
+def test_edf_matches_the_joint_hat_matrix_trace():
+    """The joint effective degrees of freedom of a parametric mean plus a GP is
+    tr(P + K C^-1 (I - P)), not p + tr(K C^-1). The difference is the overlap
+    between the GP and the design, which approaches p whenever the GP can
+    reproduce the design columns. Reference built densely with numpy, so it
+    shares no code with the implementation.
+    """
+    from timex import model
+
+    rng = np.random.default_rng(0)
+    n, p = 60, 3
+    x = np.sort(rng.uniform(0.0, 0.2, n))
+    yerr = np.full(n, 0.35)
+    X = np.column_stack([np.ones(n), x - x.mean(), rng.normal(size=n)])
+    amp, rho = 1.3, 0.02
+
+    data = {'g': dict(x=x, y=np.zeros(n), yerr=yerr, X=X,
+                      texp=0.001, x_hr=x, band='g', ref_time=0.0)}
+    # _soln's third argument is log_sigma_lc and already defaults to log(0.35),
+    # which is the jitter the dense reference below assumes
+    soln = _soln(np.log10(amp), np.log10(rho))
+    edf = model.compute_gp_edf(soln, data, {'g': None}, gp_config=None)['g']
+
+    diag = 0.35**2 + yerr**2
+    d = x[:, None] - x[None, :]
+    r = np.sqrt(3) * np.abs(d) / rho
+    K = amp**2 * (1 + r) * np.exp(-r)
+    C = K + np.diag(diag)
+    Ci = np.linalg.inv(C)
+    P = X @ np.linalg.inv(X.T @ Ci @ X) @ X.T @ Ci
+    joint = np.trace(P + K @ Ci @ (np.eye(n) - P))
+
+    # compute_gp_edf returns the GP's share; the p design columns are counted
+    # separately in nparams, so p + edf is the joint figure
+    assert p + edf == pytest.approx(joint, abs=1e-6)
+
+
+def test_edf_is_strictly_below_the_gp_alone_trace_when_a_design_is_present():
+    """The overlap is non-negative, so correcting it can only reduce the count.
+    Guards the sign of the subtraction."""
+    from timex import model
+
+    rng = np.random.default_rng(1)
+    n = 50
+    x = np.sort(rng.uniform(0.0, 0.2, n))
+    yerr = np.full(n, 0.3)
+    X = np.column_stack([np.ones(n), x - x.mean()])
+    soln = _soln(0.0, -1.7, np.log(0.3))
+
+    base = dict(x=x, y=np.zeros(n), yerr=yerr, texp=0.001, x_hr=x,
+                band='g', ref_time=0.0)
+    with_design = model.compute_gp_edf(
+        soln, {'g': dict(base, X=X)}, {'g': None}, gp_config=None)['g']
+    without = model.compute_gp_edf(
+        soln, {'g': dict(base, X=None)}, {'g': None}, gp_config=None)['g']
+
+    assert with_design < without
+    assert without - with_design <= X.shape[1] + 1e-9, 'overlap cannot exceed p'
+
+
+def test_edf_is_unchanged_for_a_gp_only_fit():
+    """X is None means p = 0 and there is nothing to overlap with, so the
+    corrected value must equal the plain smoother trace."""
+    from timex import model
+
+    rng = np.random.default_rng(2)
+    n = 40
+    x = np.sort(rng.uniform(0.0, 0.2, n))
+    yerr = np.full(n, 0.3)
+    soln = _soln(0.0, -1.7, np.log(0.3))
+    data = {'g': dict(x=x, y=np.zeros(n), yerr=yerr, X=None, texp=0.001,
+                      x_hr=x, band='g', ref_time=0.0)}
+
+    edf = model.compute_gp_edf(soln, data, {'g': None}, gp_config=None)['g']
+
+    gp, diag = model._build_gp(soln, 'g', x, yerr, None)
+    basis = np.eye(n)
+    inv_diag = np.array([gp.apply_inverse(basis[:, i])[i] for i in range(n)])
+    assert edf == pytest.approx(float(n - np.sum(diag * inv_diag)), abs=1e-12)
+
+
+def test_edf_returns_none_for_a_rank_deficient_design(caplog):
+    """A singular X^T A means the design is degenerate. Reporting an
+    uncorrected upper bound under a label that now promises exactness is the
+    failure this change removes, so no rows are written at all."""
+    import logging
+    from timex import model
+
+    rng = np.random.default_rng(3)
+    n = 40
+    x = np.sort(rng.uniform(0.0, 0.2, n))
+    yerr = np.full(n, 0.3)
+    col = x - x.mean()
+    X = np.column_stack([col, col])          # exactly collinear
+    soln = _soln(0.0, -1.7, np.log(0.3))
+    data = {'g': dict(x=x, y=np.zeros(n), yerr=yerr, X=X, texp=0.001,
+                      x_hr=x, band='g', ref_time=0.0)}
+
+    with caplog.at_level(logging.WARNING):
+        result = model.compute_gp_edf(soln, data, {'g': None}, gp_config=None)
+
+    assert result is None
+    assert 'g' in caplog.text and 'design' in caplog.text
+
+
+def test_edf_masks_the_design_matrix_the_same_as_x_and_yerr():
+    """Every other test pairs a design matrix with mask=None (i.e. mask is
+    all True) or pairs a real mask with X=None, so neither exercises the
+    masking of X itself. Here mask keeps exactly half the points and is not a
+    contiguous prefix, so a design matrix that is not restricted the same way
+    as x and yerr would change both the shape of the linear algebra and the
+    numeric result.
+    """
+    from timex import model
+
+    rng = np.random.default_rng(4)
+    n, p = 50, 2
+    x = np.sort(rng.uniform(0.0, 0.2, n))
+    yerr = np.full(n, 0.3)
+    X = np.column_stack([np.ones(n), x - x.mean()])
+    mask = np.zeros(n, dtype=bool)
+    mask[::2] = True
+    amp, rho = 1.1, 0.02
+
+    data = {'g': dict(x=x, y=np.zeros(n), yerr=yerr, X=X,
+                      texp=0.001, x_hr=x, band='g', ref_time=0.0)}
+    soln = _soln(np.log10(amp), np.log10(rho))
+    edf = model.compute_gp_edf(soln, data, {'g': mask}, gp_config=None)['g']
+
+    xm, yerrm, Xm = x[mask], yerr[mask], X[mask]
+    diag = 0.35**2 + yerrm**2
+    d = xm[:, None] - xm[None, :]
+    r = np.sqrt(3) * np.abs(d) / rho
+    K = amp**2 * (1 + r) * np.exp(-r)
+    C = K + np.diag(diag)
+    Ci = np.linalg.inv(C)
+    P = Xm @ np.linalg.inv(Xm.T @ Ci @ Xm) @ Xm.T @ Ci
+    joint = np.trace(P + K @ Ci @ (np.eye(len(xm)) - P))
+
+    assert p + edf == pytest.approx(joint, abs=1e-6)

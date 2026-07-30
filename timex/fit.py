@@ -901,12 +901,11 @@ class TransitFit:
             # a GP is charged for its hyperparameters but absorbs far more
             # degrees of freedom, so report a corrected count alongside.
             #
-            # nparams_edf, and every *_edf row below it, is an upper bound:
-            # compute_gp_edf measures the GP on its own and does not subtract
-            # what it shares with the design matrix, which is usually close to
-            # the full column count. The bias always charges the GP too much,
-            # so a GP that still wins on BIC_edf really wins, but one that
-            # loses narrowly has not been ruled out.
+            # nparams_edf, and every *_edf row below it, subtracts the overlap
+            # between the GP and the design matrix X, but not the residual
+            # overlap with the per-dataset offset or the transit parameters,
+            # neither of which is a column of X. It is therefore a tight upper
+            # bound, not an exact figure.
             #
             # compute_gp_edf does real GP linear algebra and reads GP
             # hyperparameters back out of map_soln, so it can fail (e.g. a

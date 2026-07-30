@@ -487,28 +487,24 @@ def compute_gp_edf(map_soln, datasets, masks, gp_config, max_points=5000):
     a GP charged for 5 hyperparameters absorbed about 110 degrees of freedom
     out of 560 points.
 
-    Computed as n - tr(S (K+S)^-1), which needs only the diagonal of the
-    inverse: n solves, each O(n), so O(n^2) overall.
+    The GP's own smoother trace is computed as n - tr(S (K+S)^-1), which needs
+    only the diagonal of the inverse: n solves, each O(n), so O(n^2) overall.
+    The design overlap is then subtracted from it, at the cost of one further
+    n by p solve.
 
-    This is an upper bound, not the joint effective degrees of freedom of the
-    fit. It measures the GP alone. A model that also has a parametric mean
-    costs p + tr(K C^-1) - tr(K C^-1 P), where p is the number of design
-    columns and P projects onto the design matrix under C = K + S. That last
-    term is the overlap between the GP and the design, and it is not
-    subtracted here. It approaches its bound p whenever the GP can reproduce
-    the design columns, which is the ordinary case: one real fit measured
-    1.954 against a bound of 2, and a 10 column design on 560 points would
-    inflate BIC_edf by up to 63.
-
-    The overlap is non-negative, so omitting it always charges the GP too
-    much. It cannot manufacture a preference for a GP, only suppress a real
-    one. Subtracting it costs one more n by p solve and is a modelling
-    decision rather than a cleanup, so it is deliberately left undone.
+    The value returned is the GP's share of the joint effective degrees of
+    freedom of a fit with a parametric mean and a GP, with the overlap
+    between the GP and the design matrix already subtracted out. The caller
+    adds the p design columns on top, since those are already counted in
+    nparams. This is a tight upper bound rather than an exact figure: the
+    overlap with the per-dataset offset and the transit parameters is not
+    subtracted, since neither is a column of the design matrix.
 
     Returns {dataset_name: edf}, or None if any dataset exceeds max_points,
-    since the cost is prohibitive at survey scale. Returning None rather than
-    a partial sum keeps the caller from reporting a number that omits a
-    dataset.
+    since the cost is prohibitive at survey scale, or if any dataset's design
+    matrix is rank deficient, since the overlap is then undefined. Returning
+    None rather than a partial sum keeps the caller from reporting a number
+    that omits a dataset.
     """
     for name, data in datasets.items():
         mask = masks[name]
@@ -531,7 +527,32 @@ def compute_gp_edf(map_soln, datasets, masks, gp_config, max_points=5000):
         n = int(np.sum(mask))
         basis = np.eye(n)
         inv_diag = np.array([gp.apply_inverse(basis[:, i])[i] for i in range(n)])
-        edf[name] = float(n - np.sum(diag * inv_diag))
+        gp_trace = n - np.sum(diag * inv_diag)
+
+        X = data.get('X')
+        if X is None:
+            # no parametric mean, so nothing for the GP to overlap with
+            edf[name] = float(gp_trace)
+            continue
+
+        Xm = X[mask]
+        p = Xm.shape[1]
+        # A = C^-1 X in one solve; celerite2 accepts the n by p matrix directly
+        A = np.asarray(gp.apply_inverse(Xm))
+        # tr(K C^-1 P) = p - tr((A^T S A)(X^T A)^-1), where C = K + S and P is
+        # the design-matrix projection under C, from K C^-1 = I - S C^-1 and
+        # the cyclic property of the trace
+        try:
+            overlap = p - np.trace(
+                np.linalg.solve(Xm.T @ A, A.T @ (diag[:, None] * A)))
+        except np.linalg.LinAlgError:
+            logging.warning(
+                f'skipping GP effective degrees of freedom: dataset {name} has a '
+                f'rank deficient design matrix, so the overlap between the GP and '
+                f'the design is undefined'
+            )
+            return None
+        edf[name] = float(gp_trace - overlap)
     return edf
 
 

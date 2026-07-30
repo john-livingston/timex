@@ -102,20 +102,25 @@ For a GP fit, `ic.txt` carries a second set of rows (`edf`, `nparams_edf`,
 `BIC_edf`, `AIC_edf`, `AICc_edf`) that charge the GP for the flexibility it
 actually uses instead of for its handful of hyperparameters.
 
-`nparams_edf` is an upper bound. `compute_gp_edf` measures the trace of the
-GP's own smoother and does not subtract the flexibility the GP shares with the
-design matrix, so the GP is charged for variation the design already accounts
-for. The overlap is typically close to the full number of design columns: a 10
-column design can inflate `BIC_edf` by up to about 63 on 560 points. The bias
-always runs one way, penalising the GP, so a GP that still wins on `BIC_edf`
-really wins, while one that loses by less than the number of design columns has
-not been ruled out.
+`nparams_edf` subtracts the overlap between the GP and the design matrix `X`,
+but not the residual overlap with the per-dataset offset or the transit
+parameters, neither of which is a column of `X`. It is therefore a tight
+upper bound, not an exact figure.
 
 `edf` is measured at the draw the maximized likelihood came from, not at the
 maximum posterior draw the rest of the outputs are built from. A criterion and
 its penalty have to describe one parameter vector: the edf varies by tens of
 units across a real posterior and moves with the likelihood, so taking the two
 from different draws would shift `BIC_edf` by more than the correction is worth.
+
+The `*_edf` rows are omitted entirely, with a logged warning, when a dataset's
+design matrix is rank deficient, since the overlap the correction needs is
+then undefined. Two configurations trigger this in practice: `add_bias: true`
+together with `chunk_offset: true` is structurally singular, since the chunk
+indicator columns always sum to the bias column, and outlier clipping can
+empty a chunk indicator column, turning an otherwise full-rank design rank
+deficient after masking. Both fail safe: the uncorrected `BIC`, `AIC` and
+`AICc` rows above are written either way.
 
 ### Corrected light curves
 

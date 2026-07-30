@@ -461,10 +461,11 @@ def _clip_fixture():
     """21 points alternating +/-1 with a single 20 sigma spike at index 10.
 
     Against a zero model the residual squares are 1 at twenty points and 400 at
-    the spike, so the robust rms is sqrt(median) = 1 and at nsig=7 the spike is
-    the only point outside the threshold. The mean of the squares is 420/21 =
-    20, giving an rms of 4.47 and a threshold of 31.3 that keeps the spike, so
-    this fixture separates median(resid**2) from mean(resid**2).
+    the spike, so sqrt(median) = 1, the robust estimator is 1.4826 * 1 =
+    1.4826, and at nsig=7 the threshold is 10.38, so the spike is the only
+    point outside it. The mean of the squares is 420/21 = 20, giving an
+    estimator of 6.63 and a threshold of 46.4 that keeps the spike, so this
+    fixture separates median(resid**2) from mean(resid**2).
     """
     n = 21
     x = np.arange(n, dtype=float)
@@ -711,3 +712,58 @@ def test_count_gp_hyper_counts_elements_not_sites():
 ])
 def test_claret_band_maps_only_exact_sloan_filters(band, expected):
     assert util.claret_band(band) == expected
+
+
+def _sigma_fixture():
+    """100 background points at exactly 0.6745, plus outliers at 3, 5 and 8.
+
+    median(|resid|) is 0.6745 by construction, so the scaled estimator gives
+    sigma = 1.4826 * 0.6745 = 1.0 and the planted points sit at 3, 5 and 8
+    sigma. Without the scaling the estimator returns 0.6745, so a threshold of
+    nsig=7 lands at 4.72 rather than 7 and swallows the 5 sigma point. That gap
+    is what makes this fixture discriminate.
+    """
+    background = np.tile([0.6745, -0.6745], 50)
+    y = np.concatenate([background, [3.0, 5.0, 8.0]])
+    x = np.arange(len(y), dtype=float)
+    return x, y, len(y)
+
+
+def test_clip_nsig_is_in_sigma_units():
+    """nsig=7 must clip at 7 sigma. The unscaled estimator clips at 4.72 sigma
+    and takes the 5 sigma point with it, which is real data.
+    """
+    x, y, n = _sigma_fixture()
+    soln = {'g_light_curves': np.zeros(n)}
+
+    mask = util.get_outlier_mask(x, y, 'g', soln, use_gp=False, nsig=7)
+
+    assert mask[-3], 'the 3 sigma point must survive a 7 sigma threshold'
+    assert mask[-2], 'the 5 sigma point must survive a 7 sigma threshold'
+    assert not mask[-1], 'the 8 sigma point must be clipped'
+
+
+def test_clip_nsig_boundary_is_strict():
+    """A point placed exactly on the nsig*sigma threshold is clipped, since
+    the comparison is < rather than <=, so an exact tie does not survive.
+
+    The boundary value is computed the same way get_outlier_mask computes the
+    threshold (nsig * 1.4826 * sqrt(median(resid**2))), so the tie is exact
+    in floating point and the operator alone decides the point's fate. A
+    background of identical points keeps the median unchanged by the added
+    point, so the threshold computed inside get_outlier_mask matches the one
+    computed here to the bit.
+    """
+    background = np.tile([0.6745, -0.6745], 50)
+    sigma = 1.4826 * np.sqrt(np.median(background**2))
+    nsig = 3
+    boundary = nsig * sigma
+    y = np.concatenate([background, [boundary]])
+    x = np.arange(len(y), dtype=float)
+    n = len(y)
+    soln = {'g_light_curves': np.zeros(n)}
+
+    mask = util.get_outlier_mask(x, y, 'g', soln, use_gp=False, nsig=nsig)
+
+    assert not mask[-1], 'a point exactly at the threshold must be clipped'
+    assert mask[:-1].all(), 'the background points must all survive'

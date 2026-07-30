@@ -46,7 +46,7 @@ defaults = dict(
         trim_beg = None,
         trim_end = None,
         clip = False,
-        clip_nsig = 7,
+        clip_nsig = 5,
         binsize = 5/1440,
         chunk_offset = False,
         chunk_thresh = 0.02, # gap in days above which a new offset column starts
@@ -597,7 +597,7 @@ class TransitFit:
                 if self.clobber or self.masks[name] is None:
                     x, y = [data.get(i) for i in 'x y'.split()]
                     map_soln, use_gp = self.map_soln, self.use_gp
-                    clip_nsig = self.fit_params['data'][name].get('clip_nsig', 7)
+                    clip_nsig = self.fit_params['data'][name].get('clip_nsig', 5)
                     if fn is None:
                         current_fn = f'{name}-outliers.png'
                     else:
@@ -901,12 +901,11 @@ class TransitFit:
             # a GP is charged for its hyperparameters but absorbs far more
             # degrees of freedom, so report a corrected count alongside.
             #
-            # nparams_edf, and every *_edf row below it, is an upper bound:
-            # compute_gp_edf measures the GP on its own and does not subtract
-            # what it shares with the design matrix, which is usually close to
-            # the full column count. The bias always charges the GP too much,
-            # so a GP that still wins on BIC_edf really wins, but one that
-            # loses narrowly has not been ruled out.
+            # nparams_edf, and every *_edf row below it, subtracts the overlap
+            # between the GP and the design matrix X, but not the residual
+            # overlap with the per-dataset offset or the transit parameters,
+            # neither of which is a column of X. It is therefore a tight upper
+            # bound, not an exact figure.
             #
             # compute_gp_edf does real GP linear algebra and reads GP
             # hyperparameters back out of map_soln, so it can fail (e.g. a

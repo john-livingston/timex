@@ -537,6 +537,19 @@ def compute_gp_edf(map_soln, datasets, masks, gp_config, max_points=5000):
 
         Xm = X[mask]
         p = Xm.shape[1]
+        # check the rank rather than waiting for the solve below to fail on it.
+        # LAPACK raises only on an exactly zero pivot, and the configurations
+        # that land here are singular by structure rather than by repetition,
+        # so rounding leaves them nominally invertible and the solve returns a
+        # confident wrong number
+        rank = np.linalg.matrix_rank(Xm)
+        if rank < p:
+            logging.warning(
+                f'skipping GP effective degrees of freedom: dataset {name} has a '
+                f'rank deficient design matrix ({p} columns, rank {rank}), so the '
+                f'overlap between the GP and the design is undefined'
+            )
+            return None
         # A = C^-1 X in one solve; celerite2 accepts the n by p matrix directly
         A = np.asarray(gp.apply_inverse(Xm))
         # tr(K C^-1 P) = p - tr((A^T S A)(X^T A)^-1), where C = K + S and P is
@@ -546,6 +559,7 @@ def compute_gp_edf(map_soln, datasets, masks, gp_config, max_points=5000):
             overlap = p - np.trace(
                 np.linalg.solve(Xm.T @ A, A.T @ (diag[:, None] * A)))
         except np.linalg.LinAlgError:
+            # backstop for a full rank X whose X^T C^-1 X is still singular
             logging.warning(
                 f'skipping GP effective degrees of freedom: dataset {name} has a '
                 f'rank deficient design matrix, so the overlap between the GP and '

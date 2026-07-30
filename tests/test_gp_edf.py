@@ -424,9 +424,10 @@ def test_edf_is_unchanged_for_a_gp_only_fit():
 
 
 def test_edf_returns_none_for_a_rank_deficient_design(caplog):
-    """A singular X^T A means the design is degenerate. Reporting an
-    uncorrected upper bound under a label that now promises exactness is the
-    failure this change removes, so no rows are written at all."""
+    """A degenerate design leaves the overlap undefined, so no rows are
+    written at all. These columns are exactly collinear, which LAPACK does
+    catch in the solve, so this covers the LinAlgError backstop; the
+    structural case below is the one the explicit rank check exists for."""
     import logging
     from timex import model
 
@@ -445,6 +446,39 @@ def test_edf_returns_none_for_a_rank_deficient_design(caplog):
 
     assert result is None
     assert 'g' in caplog.text and 'design' in caplog.text
+
+
+def test_edf_returns_none_for_a_structurally_rank_deficient_design(caplog):
+    """A design can be singular by structure rather than by repetition, and
+    then np.linalg.solve does not raise: LAPACK needs an exactly zero pivot,
+    and roundoff leaves this one nominally invertible. The solve returns a
+    confident wrong number instead, so the deficiency has to be caught by an
+    explicit rank check ahead of it.
+
+    The fixture is what trend=1 with add_bias and chunk_offset builds: the
+    chunk indicators sum to the bias column, so the design is rank 3 of 4.
+    Two exactly collinear columns would not exercise this, since LAPACK does
+    catch that case."""
+    import logging
+    from timex import model
+
+    rng = np.random.default_rng(3)
+    n = 40
+    x = np.sort(rng.uniform(0.0, 0.2, n))
+    yerr = np.full(n, 0.3)
+    chunk0 = np.where(np.arange(n) < n // 2, 1.0, 0.0)
+    X = np.column_stack([x - x.mean(), np.ones(n), chunk0, 1.0 - chunk0])
+    assert np.linalg.matrix_rank(X) == 3, 'fixture must be rank deficient'
+
+    soln = _soln(0.0, -1.7, np.log(0.3))
+    data = {'g': dict(x=x, y=np.zeros(n), yerr=yerr, X=X, texp=0.001,
+                      x_hr=x, band='g', ref_time=0.0)}
+
+    with caplog.at_level(logging.WARNING):
+        result = model.compute_gp_edf(soln, data, {'g': None}, gp_config=None)
+
+    assert result is None
+    assert 'g' in caplog.text and 'rank' in caplog.text
 
 
 def test_edf_masks_the_design_matrix_the_same_as_x_and_yerr():

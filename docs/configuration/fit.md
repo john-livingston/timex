@@ -185,4 +185,9 @@ Multiple bumps work the same as multiple flares -- use lists for any subset of `
 | `draws`   | Number of posterior draws | `2000` |
 | `chains`  | Number of MCMC chains | `2` |
 | `cores`   | Number of CPU cores | `2` |
+| `random_seed` | Integer seed making a fit reproducible: seeds both the sampler and the limb darkening Monte Carlo. Unset leaves the fit non-reproducible, since the limb darkening priors are redrawn each run | `null` |
 | `clobber` | Re-run even if saved results exist. Saved results are also discarded automatically when the config or data no longer match what produced them | `false` |
+
+Changing `random_seed` changes the limb darkening priors, so it invalidates the
+saved MAP as well as the chain: a reseeded rerun redoes the optimization rather
+than resuming from it.

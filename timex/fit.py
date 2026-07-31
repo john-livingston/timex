@@ -27,6 +27,11 @@ defaults = dict(
         use_gp = False,
         use_custom_optimizer = True,
         n_restarts = 1, # MAP optimizer restarts: changes the solution, not the sampling
+        # seeds the sampler and the limb darkening Monte Carlo, making a fit
+        # reproducible. None keeps the historical fixed sampler key and leaves
+        # limb darkening unseeded, so the default changes nothing. it is a model
+        # setting, not a sampler one: it reaches the priors and so the MAP
+        random_seed = None,
     ),
 
     sampler = dict(
@@ -171,6 +176,7 @@ class TransitFit:
         self.draws = fit_params['draws']
         self.chains = fit_params['chains']
         self.cores = fit_params['cores']
+        self.random_seed = fit_params['random_seed']
         self.n_restarts = fit_params['n_restarts']
         self.clobber = fit_params['clobber']
         # initialize

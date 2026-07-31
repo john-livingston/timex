@@ -85,6 +85,20 @@ def test_unknown_key_lands_in_model_tier(tmp_path):
     assert cache.compute_keys(edited, {}, str(tmp_path))['model'] != base['model']
 
 
+def test_random_seed_lands_in_model_tier(tmp_path):
+    """random_seed reaches the limb darkening priors, so it changes the model
+    and the MAP, not only the chain. Keeping it out of RUN_TIER is what stops a
+    reseeded rerun from reusing a map.pkl fitted under the previous priors."""
+    fp = _fit_params(tmp_path)
+    fp['random_seed'] = None
+    base = cache.compute_keys(fp, {}, str(tmp_path))
+    edited = copy.deepcopy(fp)
+    edited['random_seed'] = 7
+    new = cache.compute_keys(edited, {}, str(tmp_path))
+    assert new['model'] != base['model']
+    assert new['run'] != base['run']
+
+
 def test_data_hashed_by_content_not_path(tmp_path):
     """Copying a project directory must not invalidate a byte identical cache."""
     fp = _fit_params(tmp_path)

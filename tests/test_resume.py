@@ -452,6 +452,36 @@ def test_a_stale_mask_disqualifies_the_map_rederived_after_sampling(tmp_path, mo
     )
 
 
+def test_sample_passes_the_configured_random_seed_to_model_sample(tmp_path, monkeypatch):
+    """Nothing else in the suite exercises this call site: test_random_seed.py
+    calls model.sample directly and never goes through fit.py, and its
+    end-to-end fits are confounded because the limb darkening priors are
+    seeded either way regardless of whether the sampler itself is. The seed
+    is 42, not 0 or None, so a dropped `random_seed=self.random_seed` kwarg
+    falling back to either default cannot pass by coincidence.
+    """
+    from timex import fit
+
+    captured = {}
+
+    def fake_sample(*args, **kwargs):
+        captured.update(kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fit.model, 'sample', fake_sample)
+    tf = _bare_fit(tmp_path, stale=set())
+    tf.clobber = True
+    tf.trace = None
+    tf.model_fn = object()
+    tf.tune = tf.draws = tf.chains = tf.cores = 1
+    tf.random_seed = 42
+
+    with pytest.raises(KeyboardInterrupt):
+        tf.sample(plot_fit=False, plot_systematics=False)
+
+    assert captured['random_seed'] == 42
+
+
 def _load_params(wd):
     with open(os.path.join(wd, 'fit.yaml')) as f:
         fit_params = yaml.safe_load(f)

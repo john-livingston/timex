@@ -54,6 +54,20 @@ def test_same_seed_gives_the_same_limb_darkening_priors(tmp_path):
     assert a == pytest.approx(b, rel=0, abs=0)
 
 
+def test_seed_zero_gives_the_same_limb_darkening_priors(tmp_path):
+    """Not redundant with the same-seed test above, which uses seed=3. The
+    guard at fit.py is `self.random_seed is None`; weakening it to a
+    truthiness check, `if not self.random_seed`, treats 0 as unset and
+    leaves it unseeded, and every other test in this file still passes
+    because none of them use seed 0. Both test_config_matrix.py and
+    test_end_to_end.py hardcode random_seed=0 for their fit fixtures, so
+    that regression would surface there as flaky drift, not as a failure
+    here, unless 0 specifically is pinned."""
+    a = _u_star(_fit(tmp_path, 'a', random_seed=0))
+    b = _u_star(_fit(tmp_path, 'b', random_seed=0))
+    assert a == pytest.approx(b, rel=0, abs=0)
+
+
 def test_different_seeds_give_different_limb_darkening_priors(tmp_path):
     """Not redundant with the test above. With the np.random.seed call removed
     but the get_state/set_state restore left in place, every call replays the

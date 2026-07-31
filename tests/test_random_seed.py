@@ -104,8 +104,14 @@ def test_same_seed_reproduces_ic_txt(tmp_path):
 
 @pytest.mark.slow
 def test_different_seeds_give_a_different_chain(tmp_path):
-    """Pins that the seed reaches the sampler, not only the priors. Without
-    this, hardcoding PRNGKey(0) in model.sample still passes the test above."""
+    """End to end check that two full fits at different seeds produce
+    different results overall. This does not pin the sampler specifically:
+    mutation testing showed that hardcoding PRNGKey(0) in model.sample still
+    passes this test, because different seeds already draw different limb
+    darkening priors (Task 2) and that alone diverges the chains.
+    test_the_sampler_key_responds_to_the_seed below isolates the sampler by
+    holding model_fn and map_soln fixed and varying only the seed passed to
+    model.sample."""
     def _lp(name, seed):
         tf = _fit(tmp_path, name, random_seed=seed)
         tf.build_model(verbose=False, plot=False)
@@ -113,6 +119,29 @@ def test_different_seeds_give_a_different_chain(tmp_path):
         return np.asarray(tf.trace.sample_stats['lp'].values).ravel()
 
     assert not np.allclose(_lp('a', 5), _lp('b', 6))
+
+
+@pytest.mark.slow
+def test_the_sampler_key_responds_to_the_seed(tmp_path):
+    """model.sample must actually consume random_seed. A hardcoded PRNGKey(0)
+    is invisible to every other test in this file: different seeds already
+    diverge through the limb darkening priors, so the chains differ for a
+    reason that has nothing to do with the sampler. Holding model_fn and
+    map_soln fixed removes that path and leaves the key as the only variable."""
+    import arviz as az
+    from timex import model
+
+    tf = _fit(tmp_path, 'a', random_seed=None)
+    tf.build_model(verbose=False, plot=False)
+
+    def _lp(random_seed):
+        mcmc = model.sample(
+            tf.model_fn, tf.map_soln, tune=tf.tune, draws=tf.draws,
+            chains=tf.chains, cores=tf.cores, random_seed=random_seed
+        )
+        return np.asarray(az.from_numpyro(mcmc).sample_stats['lp'].values)
+
+    assert not np.array_equal(_lp(0), _lp(1))
 
 
 @pytest.mark.slow

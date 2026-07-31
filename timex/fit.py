@@ -684,7 +684,8 @@ class TransitFit:
                 tune=tune,
                 draws=draws,
                 chains=chains,
-                cores=cores
+                cores=cores,
+                random_seed=self.random_seed
             )
             self.trace = az.from_numpyro(mcmc)
             self.trace.to_netcdf(os.path.join(self.outdir, 'trace.nc'))

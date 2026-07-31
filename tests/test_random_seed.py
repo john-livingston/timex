@@ -84,3 +84,57 @@ def test_building_a_fit_leaves_the_callers_numpy_state_untouched(tmp_path):
     np.random.seed(1234)
     _fit(tmp_path, 'a', random_seed=99)
     assert np.random.rand(3) == pytest.approx(expected, rel=0, abs=0)
+
+
+@pytest.mark.slow
+def test_same_seed_reproduces_ic_txt(tmp_path):
+    """The user facing claim: two runs of one config at one seed agree. This is
+    what fails today, because the limb darkening priors are redrawn each run
+    and the sampler key alone cannot save it."""
+    def _run(name):
+        tf = _fit(tmp_path, name, random_seed=5)
+        tf.build_model(verbose=False, plot=False)
+        tf.sample(plot_fit=False, plot_systematics=False)
+        tf.save_results()
+        with open(os.path.join(tf.outdir, 'ic.txt')) as f:
+            return f.read()
+
+    assert _run('a') == _run('b')
+
+
+@pytest.mark.slow
+def test_different_seeds_give_a_different_chain(tmp_path):
+    """Pins that the seed reaches the sampler, not only the priors. Without
+    this, hardcoding PRNGKey(0) in model.sample still passes the test above."""
+    def _lp(name, seed):
+        tf = _fit(tmp_path, name, random_seed=seed)
+        tf.build_model(verbose=False, plot=False)
+        tf.sample(plot_fit=False, plot_systematics=False)
+        return np.asarray(tf.trace.sample_stats['lp'].values).ravel()
+
+    assert not np.allclose(_lp('a', 5), _lp('b', 6))
+
+
+@pytest.mark.slow
+def test_none_seed_matches_prngkey_zero(tmp_path):
+    """random_seed=None must reach model.sample as the historical fixed
+    PRNGKey(0), so an unseeded config samples byte-identically to before this
+    feature existed. Tested at the model.sample boundary rather than through
+    two full fits: with random_seed=None the priors are left unseeded, so two
+    full fits would differ because of claret's redraw alone and would prove
+    nothing about the sampler key. One fit is built, then model.sample is
+    called twice against the same model_fn and map_soln."""
+    import arviz as az
+    from timex import model
+
+    tf = _fit(tmp_path, 'a', random_seed=None)
+    tf.build_model(verbose=False, plot=False)
+
+    def _lp(random_seed):
+        mcmc = model.sample(
+            tf.model_fn, tf.map_soln, tune=tf.tune, draws=tf.draws,
+            chains=tf.chains, cores=tf.cores, random_seed=random_seed
+        )
+        return np.asarray(az.from_numpyro(mcmc).sample_stats['lp'].values)
+
+    assert np.array_equal(_lp(None), _lp(0))

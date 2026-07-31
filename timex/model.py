@@ -99,9 +99,12 @@ def sample(
     tune=1000,
     draws=1000,
     chains=2,
-    cores=2
+    cores=2,
+    random_seed=None
 ):
-    rng_key = jax.random.PRNGKey(0)
+    # None keeps the historical fixed key, so an unseeded config behaves
+    # exactly as it did before random_seed existed
+    rng_key = jax.random.PRNGKey(0 if random_seed is None else random_seed)
     init_strategy = init_to_value(values=_as_init_arrays(map_soln))
     nuts = NUTS(model_fn, dense_mass=True, init_strategy=init_strategy,
                 target_accept_prob=0.95)

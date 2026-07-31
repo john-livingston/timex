@@ -396,11 +396,24 @@ class TransitFit:
         planets = [self.sys_params['planets'][k] for k in self.planets]
         x_mean = np.mean([v['x'].mean() for k,v in self.data.items()])
         tc_guess, tc_guess_unc = util.get_tc_prior(self.fit_params, x_mean, self.ref_time)
-        self.priors = util.get_priors(
-            self.fit_basis, self.sys_params['star'],
-            planets, self.fixed, self.bands,
-            tc_guess, tc_guess_unc, uniform=self.uniform
-        )
+        # limbdark.claret marginalizes over the stellar parameter uncertainties
+        # with numpy's global RNG, so the limb darkening priors differ between
+        # runs of the same config. seeding only the sampler would leave the fit
+        # irreproducible anyway, so random_seed covers this too. the previous
+        # global state is restored: building a fit must not reset a random
+        # stream the caller was using
+        state = None if self.random_seed is None else np.random.get_state()
+        if state is not None:
+            np.random.seed(self.random_seed)
+        try:
+            self.priors = util.get_priors(
+                self.fit_basis, self.sys_params['star'],
+                planets, self.fixed, self.bands,
+                tc_guess, tc_guess_unc, uniform=self.uniform
+            )
+        finally:
+            if state is not None:
+                np.random.set_state(state)
         # Add log_sigma_lc priors based on data
         self._add_log_sigma_lc_priors()
         if self.include_flare:

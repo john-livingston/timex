@@ -64,6 +64,16 @@ def test_different_seeds_give_different_limb_darkening_priors(tmp_path):
     assert not np.allclose(a, b)
 
 
+def test_unseeded_is_still_unseeded(tmp_path):
+    """The default must change nothing: with random_seed unset, claret stays
+    unseeded and the limb darkening priors are redrawn per run. If this ever
+    passes by returning equal priors, the None path has started seeding and the
+    promise that the default is byte-identical to the old behavior is broken."""
+    a = _u_star(_fit(tmp_path, 'a', random_seed=None))
+    b = _u_star(_fit(tmp_path, 'b', random_seed=None))
+    assert not np.allclose(a, b)
+
+
 def test_building_a_fit_leaves_the_callers_numpy_state_untouched(tmp_path):
     """Seeding is a side effect on a process global. A caller drawing its own
     random numbers must not have its stream silently reset by constructing a

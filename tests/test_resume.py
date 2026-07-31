@@ -39,6 +39,7 @@ def _bare_fit(tmp_path, stale):
     tf.use_custom_optimizer = True
     tf.gp_config = None
     tf.n_restarts = 1
+    tf.random_seed = None
     return tf
 
 

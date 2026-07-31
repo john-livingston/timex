@@ -44,7 +44,8 @@ def run(tmp_path_factory):
     # so build_model would skip MAP optimization and sample() would skip
     # MCMC entirely, this would make the test pass in seconds without ever
     # running the pipeline it is meant to exercise.
-    fit_params.update(dict(tune=5, draws=5, chains=1, cores=1, clobber=True))
+    fit_params.update(dict(tune=5, draws=5, chains=1, cores=1, clobber=True,
+                           random_seed=0))
 
     tf = fit.TransitFit(sys_params, fit_params, wd=str(wd))
     tf.build_model(verbose=False, plot=False)

@@ -51,7 +51,11 @@ def _setup(tmp_path, name, mutate):
         fit_params = yaml.safe_load(f)
     with open(wd / 'sys.yaml') as f:
         sys_params = yaml.safe_load(f)
-    fit_params.update(dict(tune=5, draws=5, chains=1, cores=1, clobber=True))
+    # seeded so the limb darkening priors and the chain are fixed: unseeded,
+    # the edf on the GP fixture ranges over tens of units between runs, which
+    # is enough to flip which draw maximizes the likelihood
+    fit_params.update(dict(tune=5, draws=5, chains=1, cores=1, clobber=True,
+                           random_seed=0))
     mutate(fit_params)
     return wd, fit_params, sys_params
 

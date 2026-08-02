@@ -185,4 +185,19 @@ Multiple bumps work the same as multiple flares -- use lists for any subset of `
 | `draws`   | Number of posterior draws | `2000` |
 | `chains`  | Number of MCMC chains | `2` |
 | `cores`   | Number of CPU cores | `2` |
+| `random_seed` | Integer seed making a fit reproducible: seeds both the sampler and the limb darkening Monte Carlo. Unset leaves the fit non-reproducible, since the limb darkening priors are redrawn each run | `null` |
 | `clobber` | Re-run even if saved results exist. Saved results are also discarded automatically when the config or data no longer match what produced them | `false` |
+
+Changing `random_seed` changes the limb darkening priors, so it invalidates the
+saved MAP as well as the chain: a reseeded rerun redoes the optimization rather
+than resuming from it.
+
+Adding this key also changes the model-tier cache digest, so every output
+directory written before this version refits once, trace.nc included. This is
+unavoidable and safe.
+
+Leaving `random_seed` unset does not make resuming fully sound either: the
+model key stays the same across runs, but claret still redraws the limb
+darkening priors unseeded each time, so a resumed map.pkl can be optimized
+against priors that no longer match the current run's. This predates
+`random_seed` and is not a new bug; setting a seed is what fixes it.

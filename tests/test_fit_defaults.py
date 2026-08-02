@@ -39,6 +39,22 @@ def test_explicit_n_restarts_survives_the_default_merge():
     assert merged['n_restarts'] == 5
 
 
+def test_random_seed_is_a_model_setting():
+    """It seeds the limb darkening Monte Carlo, so it changes the priors and
+    the MAP, not only the chain. Same argument as n_restarts."""
+    assert 'random_seed' in fit.defaults['model']
+    assert 'random_seed' not in fit.defaults['sampler']
+
+
+def test_random_seed_defaults_to_none():
+    """None must mean today's behavior: fixed sampler key, unseeded claret."""
+    assert _validated({'data': {}, 'planets': 'c'})['random_seed'] is None
+
+
+def test_explicit_random_seed_survives_the_default_merge():
+    assert _validated({'data': {}, 'planets': 'c', 'random_seed': 11})['random_seed'] == 11
+
+
 def test_explicit_sampler_settings_survive_the_default_merge():
     """The same guard covers the sampler section, where being overwritten
     would silently replace a long production run with the 2000 draw default."""

@@ -27,6 +27,11 @@ defaults = dict(
         use_gp = False,
         use_custom_optimizer = True,
         n_restarts = 1, # MAP optimizer restarts: changes the solution, not the sampling
+        # seeds the sampler and the limb darkening Monte Carlo, making a fit
+        # reproducible. None keeps the historical fixed sampler key and leaves
+        # limb darkening unseeded, so the default changes nothing. it is a model
+        # setting, not a sampler one: it reaches the priors and so the MAP
+        random_seed = None,
     ),
 
     sampler = dict(
@@ -171,6 +176,7 @@ class TransitFit:
         self.draws = fit_params['draws']
         self.chains = fit_params['chains']
         self.cores = fit_params['cores']
+        self.random_seed = fit_params['random_seed']
         self.n_restarts = fit_params['n_restarts']
         self.clobber = fit_params['clobber']
         # initialize
@@ -390,11 +396,24 @@ class TransitFit:
         planets = [self.sys_params['planets'][k] for k in self.planets]
         x_mean = np.mean([v['x'].mean() for k,v in self.data.items()])
         tc_guess, tc_guess_unc = util.get_tc_prior(self.fit_params, x_mean, self.ref_time)
-        self.priors = util.get_priors(
-            self.fit_basis, self.sys_params['star'],
-            planets, self.fixed, self.bands,
-            tc_guess, tc_guess_unc, uniform=self.uniform
-        )
+        # limbdark.claret marginalizes over the stellar parameter uncertainties
+        # with numpy's global RNG, so the limb darkening priors differ between
+        # runs of the same config. seeding only the sampler would leave the fit
+        # irreproducible anyway, so random_seed covers this too. the previous
+        # global state is restored: building a fit must not reset a random
+        # stream the caller was using
+        state = None if self.random_seed is None else np.random.get_state()
+        if state is not None:
+            np.random.seed(self.random_seed)
+        try:
+            self.priors = util.get_priors(
+                self.fit_basis, self.sys_params['star'],
+                planets, self.fixed, self.bands,
+                tc_guess, tc_guess_unc, uniform=self.uniform
+            )
+        finally:
+            if state is not None:
+                np.random.set_state(state)
         # Add log_sigma_lc priors based on data
         self._add_log_sigma_lc_priors()
         if self.include_flare:
@@ -665,7 +684,8 @@ class TransitFit:
                 tune=tune,
                 draws=draws,
                 chains=chains,
-                cores=cores
+                cores=cores,
+                random_seed=self.random_seed
             )
             self.trace = az.from_numpyro(mcmc)
             self.trace.to_netcdf(os.path.join(self.outdir, 'trace.nc'))

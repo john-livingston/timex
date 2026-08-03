@@ -181,10 +181,23 @@ def build(
                     v[p] = jnp.array(priors['u_star'][band], dtype=jnp.float64)
                 else:
                     if priors['u_star_prior'] == 'uniform':
-                        v[p] = numpyro.sample(p, dist.Uniform(
-                            jnp.zeros(2), jnp.ones(2)))
+                        # get_priors encodes the configured range as a midpoint
+                        # and a full width per band, the same convention get_rv
+                        # decodes for every other uniform parameter. hardcoding
+                        # 0 to 1 here instead discarded the range the config
+                        # asked for, silently and without an error.
+                        #
+                        # the uniform branch stores one scalar midpoint and
+                        # width per band, not one per coefficient, so broadcast
+                        # across both. the site has to stay shape (2,):
+                        # _compute_light_curve reads u_star[0] and u_star[1]
+                        mid = jnp.asarray(priors['u_star'][band], dtype=jnp.float64)
+                        wid = jnp.asarray(priors['u_star_unc'][band], dtype=jnp.float64)
+                        lower = jnp.broadcast_to(mid - wid/2, (2,))
+                        upper = jnp.broadcast_to(mid + wid/2, (2,))
+                        v[p] = numpyro.sample(p, dist.Uniform(lower, upper))
                         if verbose:
-                            print(f'{p} ~ uniform(0,1)')
+                            print(f'{p} ~ uniform({lower},{upper})')
                     else:
                         mu = jnp.array(priors['u_star'][band], dtype=jnp.float64)
                         sd = jnp.array(priors['u_star_unc'][band], dtype=jnp.float64)

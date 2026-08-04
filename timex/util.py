@@ -260,7 +260,13 @@ def get_priors(fit_basis, star, planets, fixed, bands, tc_guess, tc_guess_unc, u
         priors['u_star_prior'] = 'uniform'
         bounds = np.array(uniform['u_star'])
         priors['u_star_unc'] = {band:bounds[1] - bounds[0] for band in bands}
-        priors['u_star_initval'] = priors['u_star']
+        # deliberately no u_star_initval. nothing reads any *_initval here,
+        # numpyro takes its starting point from map_soln via init_to_value, and
+        # the raw claret draw this used to store was never clipped to the
+        # configured bounds. a narrower range than the draw then puts an out of
+        # support value in the init: timer, whose model does read initval, got a
+        # nan in its initial point that way. if this is ever wired up, clip it
+        # like the loop below does
         priors['u_star'] = {band:(bounds[0] + bounds[1]) / 2 for band in bands}
     else:
         priors['u_star_prior'] = 'gaussian'

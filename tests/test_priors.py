@@ -159,11 +159,16 @@ def test_per_planet_bounds_reject_a_planet_count_mismatch():
 
 
 def test_uniform_initval_is_clipped_inside_the_bounds():
-    """The starting value must lie strictly inside the prior.
+    """A stored initval must lie strictly inside the prior it belongs to.
 
-    sys.yaml's ror is the natural initval and it sits outside the range below.
-    Left unclipped it starts the optimizer at zero prior density, which fails
-    in a way that looks like a bad fit rather than a bad configuration.
+    sys.yaml's ror is the natural initval and it sits outside the range below,
+    so without the clip get_priors would hand out a value at zero prior density.
+
+    Nothing in timex consumes *_initval today: numpyro takes its starting point
+    from map_soln through init_to_value. This guards the invariant rather than a
+    live code path, which is worth the line because the invariant is load
+    bearing next door. timer's model does read initval, and an unclipped one put
+    a nan in its initial point.
     """
     from timex import util
     star, planets = _star_and_planets(1)

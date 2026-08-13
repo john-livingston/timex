@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python >= 3.8 (3.13 recommended)
+- Python >= 3.11 (3.13 recommended)
 
 ## Install
 

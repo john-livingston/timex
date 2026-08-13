@@ -135,8 +135,16 @@ def test_different_seeds_give_a_different_chain(tmp_path):
     assert not np.allclose(_lp('a', 5), _lp('b', 6))
 
 
+@pytest.fixture(scope='module')
+def unseeded_built(tmp_path_factory):
+    """One unseeded build_model, shared by the two sampler-key tests."""
+    tf = _fit(tmp_path_factory.mktemp('unseeded'), 'a', random_seed=None)
+    tf.build_model(verbose=False, plot=False)
+    return tf
+
+
 @pytest.mark.slow
-def test_the_sampler_key_responds_to_the_seed(tmp_path):
+def test_the_sampler_key_responds_to_the_seed(unseeded_built):
     """model.sample must actually consume random_seed. A hardcoded PRNGKey(0)
     is invisible to every other test in this file: different seeds already
     diverge through the limb darkening priors, so the chains differ for a
@@ -145,8 +153,7 @@ def test_the_sampler_key_responds_to_the_seed(tmp_path):
     import arviz as az
     from timex import model
 
-    tf = _fit(tmp_path, 'a', random_seed=None)
-    tf.build_model(verbose=False, plot=False)
+    tf = unseeded_built
 
     def _lp(random_seed):
         mcmc = model.sample(
@@ -159,7 +166,7 @@ def test_the_sampler_key_responds_to_the_seed(tmp_path):
 
 
 @pytest.mark.slow
-def test_none_seed_matches_prngkey_zero(tmp_path):
+def test_none_seed_matches_prngkey_zero(unseeded_built):
     """random_seed=None must reach model.sample as the historical fixed
     PRNGKey(0), so an unseeded config samples byte-identically to before this
     feature existed. Tested at the model.sample boundary rather than through
@@ -170,8 +177,7 @@ def test_none_seed_matches_prngkey_zero(tmp_path):
     import arviz as az
     from timex import model
 
-    tf = _fit(tmp_path, 'a', random_seed=None)
-    tf.build_model(verbose=False, plot=False)
+    tf = unseeded_built
 
     def _lp(random_seed):
         mcmc = model.sample(

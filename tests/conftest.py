@@ -2,6 +2,33 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from .pipeline_fixtures import session_fit, use_fixed_t0, use_gp
+
+
+@pytest.fixture(scope='session')
+def default_fit(tmp_path_factory):
+    """One short default (spline) run of the shipped example.
+
+    Shared by the end-to-end checks, the non-GP IC rows, and the default
+    posterior classification test. Those only read the result.
+    """
+    return session_fit(tmp_path_factory, 'default_fit', lambda p: None)
+
+
+@pytest.fixture(scope='session')
+def gp_fit(tmp_path_factory):
+    """One short GP run of the shipped example.
+
+    Shared by the GP pipeline, IC, EDF, and posterior classification tests.
+    """
+    return session_fit(tmp_path_factory, 'gp_fit', use_gp)
+
+
+@pytest.fixture(scope='session')
+def fixed_t0_fit(tmp_path_factory):
+    """One short run with t0 held fixed."""
+    return session_fit(tmp_path_factory, 'fixed_t0_fit', use_fixed_t0)
+
 
 @pytest.fixture
 def synthetic_lc(tmp_path):

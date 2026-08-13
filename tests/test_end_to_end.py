@@ -1,57 +1,16 @@
 import os
-import shutil
 
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXAMPLE = os.path.join(REPO_ROOT, 'examples', 'hip67522c')
 
 pytestmark = pytest.mark.slow
 
 
-@pytest.fixture(scope='module')
-def run(tmp_path_factory):
-    """One short end to end run of the shipped example, shared by every test.
-
-    The tests below only read from it, and the fit is by far the slowest thing
-    in the suite, so it runs once per module rather than once per test.
-    """
-    from timex import fit
-
-    wd = tmp_path_factory.mktemp('e2e') / 'hip67522c'
-    # ignore 'out': examples/hip67522c/out ships with a real trace.nc and
-    # map.pkl from a previous run, and it is ~120MB. clobber=True below
-    # means these files are never read, so copying them would only slow
-    # down every test run for no benefit.
-    shutil.copytree(EXAMPLE, wd, ignore=shutil.ignore_patterns('out'))
-
-    with open(wd / 'fit.yaml') as f:
-        fit_params = yaml.safe_load(f)
-    with open(wd / 'sys.yaml') as f:
-        sys_params = yaml.safe_load(f)
-
-    # sampler settings are flat top level keys in fit.yaml, not nested:
-    # validate() merges defaults['sampler'] into fit_params at the top level.
-    # keep the run short, this checks pipeline wiring, not the science
-    #
-    # clobber=True is required here: examples/hip67522c/out ships with a real
-    # trace.nc and map.pkl from a previous run, and copytree carries them into
-    # wd. TransitFit.__init__ calls load_saved() unconditionally, and with the
-    # default clobber=False it would silently adopt that pre-existing trace,
-    # so build_model would skip MAP optimization and sample() would skip
-    # MCMC entirely, this would make the test pass in seconds without ever
-    # running the pipeline it is meant to exercise.
-    fit_params.update(dict(tune=5, draws=5, chains=1, cores=1, clobber=True,
-                           random_seed=0))
-
-    tf = fit.TransitFit(sys_params, fit_params, wd=str(wd))
-    tf.build_model(verbose=False, plot=False)
-    tf.sample(plot_fit=False, plot_systematics=False)
-    tf.save_results()
-    return wd, tf
+@pytest.fixture
+def run(default_fit):
+    """The session-scoped default fit. These tests only read from it."""
+    return default_fit
 
 
 def _unmasked(tf, name):

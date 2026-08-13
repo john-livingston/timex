@@ -1,34 +1,10 @@
 import os
 import re
-import shutil
 
 import pytest
-import yaml
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXAMPLE = os.path.join(REPO_ROOT, 'examples', 'hip67522c')
 MODEL_PY = os.path.join(REPO_ROOT, 'timex', 'model.py')
-
-# mirrors test_config_matrix.py's GP_BLOCK/_use_gp: the GP configuration
-# documented in the comments at the bottom of examples/hip67522c/fit.yaml.
-GP_BLOCK = dict(
-    log_amp=-1, log_amp_unc=4, log_amp_prior='uniform',
-    log_scale=-1, log_scale_unc=4, log_scale_prior='uniform',
-    per_dataset=['log_amp'],
-)
-
-
-def _use_gp(fit_params):
-    for spec in fit_params['data'].values():
-        spec['spline'] = False
-        spec['trend'] = 1
-    fit_params['use_gp'] = True
-    fit_params['gp'] = dict(GP_BLOCK)
-
-
-def _default(fit_params):
-    """The out of the box (non GP) configuration: no mutation."""
-
 
 # every scalar or vector site that is a genuine free parameter, by exact name
 # or by prefix. anything in the posterior matching neither this nor
@@ -50,25 +26,9 @@ def _is_classified(name):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize('name,mutate', [
-    ('default', _default),
-    ('gp', _use_gp),
-])
-def test_every_posterior_var_is_classified(tmp_path, name, mutate):
-    from timex import fit
-
-    wd = tmp_path / f'suffixes_{name}'
-    shutil.copytree(EXAMPLE, wd, ignore=shutil.ignore_patterns('out'))
-    with open(wd / 'fit.yaml') as f:
-        fit_params = yaml.safe_load(f)
-    with open(wd / 'sys.yaml') as f:
-        sys_params = yaml.safe_load(f)
-    fit_params.update(dict(tune=5, draws=5, chains=1, cores=1, clobber=True))
-    mutate(fit_params)
-
-    tf = fit.TransitFit(sys_params, fit_params, wd=str(wd))
-    tf.build_model(verbose=False, plot=False)
-    tf.sample(plot_fit=False, plot_systematics=False)
+@pytest.mark.parametrize('fit_fixture', ['default_fit', 'gp_fit'])
+def test_every_posterior_var_is_classified(fit_fixture, request):
+    _, tf = request.getfixturevalue(fit_fixture)
 
     # parametrized over both the default and a GP config, so a site that
     # only ever exists on the GP path (gp_log_amp/gp_log_scale, gp_pred, a

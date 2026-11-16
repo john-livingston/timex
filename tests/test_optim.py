@@ -58,3 +58,28 @@ def test_optimize_raises_when_no_solution(monkeypatch):
     # inside unravel_fn
     with pytest.raises(RuntimeError, match='no valid solution'):
         optim.optimize(_tiny_model, verbose=False, progress=False)
+
+
+def _narrow_and_broad_model():
+    numpyro.sample('p', dist.Normal(14.334894, 3e-5))
+    numpyro.sample('w', dist.Normal(0.0, 1000.0))
+    numpyro.sample('r', dist.Uniform(0.01, 0.15))
+
+
+def test_prior_scaling_rescales_only_narrow_priors():
+    """A narrow prior gets its own center and width, everything else is left alone.
+
+    Scaling a broad prior by its spread is the version that broke the
+    optimizer, so the broad and the bounded site must keep center 0, scale 1.
+    """
+    import jax
+    from numpyro.infer.util import initialize_model
+
+    z = initialize_model(jax.random.PRNGKey(0), _narrow_and_broad_model)[0].z
+    center, scale = optim._prior_scaling(_narrow_and_broad_model, z)
+    names = sorted(z)  # ravel_pytree flattens dict keys in sorted order
+    got = {k: (center[i], scale[i]) for i, k in enumerate(names)}
+    assert got['p'][0] == pytest.approx(14.334894, abs=1e-4)
+    assert got['p'][1] == pytest.approx(3e-5, rel=0.3)
+    assert got['w'] == (0.0, 1.0)
+    assert got['r'] == (0.0, 1.0)

@@ -6,9 +6,56 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from scipy.optimize import minimize
-from numpyro.infer.util import initialize_model
+from numpyro.infer import Predictive
+from numpyro.infer.util import initialize_model, unconstrain_fn
 import sys
 import logging
+
+# A coordinate whose prior spread, in unconstrained space, is below this is
+# optimized in units of that spread. Uniform priors (spread near 1.8) and unit
+# normal priors (spread 1) stay well clear of it.
+NARROW_PRIOR_SCALE = 0.1
+
+
+def _prior_scaling(model_fn, init_params, n_draws=100):
+    """Center and scale for each unconstrained coordinate of a model.
+
+    L-BFGS-B is not scale invariant. A parameter with a very narrow prior,
+    such as a period known to 3e-5 days, has a coordinate millions of times
+    narrower than the rest, and the optimizer then stalls or its line search
+    aborts. Such a coordinate is returned with the median and the standard
+    deviation of its prior draws, so it can be optimized as
+    center + scale * u.
+
+    Every other coordinate gets center 0 and scale 1, which leaves it as it
+    is. Prior spread is only the right scale for a narrow prior: a broad
+    prior is usually far wider than the posterior, and stretching the
+    coordinate to match it makes the problem worse.
+
+    Args:
+        model_fn: The numpyro model function
+        init_params: Unconstrained parameter dict from initialize_model
+        n_draws: Number of prior draws used for the estimate
+
+    Returns:
+        (center, scale): 1-d numpy arrays in the order of
+        jax.flatten_util.ravel_pytree(init_params)
+    """
+    # A fixed key, so the scales do not depend on the restart
+    predictive = Predictive(model_fn, num_samples=n_draws,
+                            return_sites=list(init_params))
+    draws = predictive(jax.random.PRNGKey(0))
+
+    def flat_unconstrained(draw):
+        unconstrained = unconstrain_fn(model_fn, (), {}, draw)
+        return jax.flatten_util.ravel_pytree(unconstrained)[0]
+
+    flat = np.asarray(jax.vmap(flat_unconstrained)(draws))
+    spread = np.std(flat, axis=0)
+    narrow = np.isfinite(spread) & (spread > 0) & (spread < NARROW_PRIOR_SCALE)
+    center = np.where(narrow, np.median(flat, axis=0), 0.0)
+    scale = np.where(narrow, spread, 1.0)
+    return center, scale
 
 
 def optimize(

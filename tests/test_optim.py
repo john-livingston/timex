@@ -83,3 +83,45 @@ def test_prior_scaling_rescales_only_narrow_priors():
     assert got['p'][1] == pytest.approx(3e-5, rel=0.3)
     assert got['w'] == (0.0, 1.0)
     assert got['r'] == (0.0, 1.0)
+
+
+def _narrow_posterior_model():
+    x = numpyro.sample('x', dist.Normal(5.0, 0.01))
+    numpyro.sample('obs', dist.Normal(x, 0.01), obs=np.array(5.02))
+
+
+def test_optimize_returns_a_narrow_prior_map_in_parameter_units():
+    """Equal prior and likelihood widths put the MAP halfway: 5.01.
+
+    The optimizer works in units of the prior width for this site. Returning
+    the scaled coordinate instead of the parameter would give about 1.0.
+    """
+    result = optim.optimize(_narrow_posterior_model, verbose=False, progress=False)
+    assert result['x'] == pytest.approx(5.01, abs=1e-4)
+
+
+@pytest.mark.slow
+def test_map_finds_the_transit_when_the_period_is_free(tmp_path):
+    """The example's MAP keeps its transit with a sampled period.
+
+    The period prior is 3e-5 d wide. Optimized in raw days, L-BFGS-B ended at
+    a radius ratio near 0.011, the lower bound, instead of about 0.063.
+    """
+    from timex import fit
+    from .pipeline_fixtures import copy_example, load_params
+
+    wd = copy_example(tmp_path / 'hip67522c')
+    fit_params, sys_params = load_params(wd, fixed=['u_star'])
+    tf = fit.TransitFit(sys_params, fit_params, wd=str(wd))
+    tf.build_model(verbose=False, plot=False)
+    assert float(np.ravel(tf.map_soln['ror'])[0]) > 0.05
+
+
+def test_optimize_runs_unscaled_when_the_prior_cannot_be_drawn(monkeypatch):
+    """A model whose prior draws fail still gets its MAP, as it did before
+    the scaling existed. The closed-form answer is 0.25, see above."""
+    def fail(*args, **kwargs):
+        raise ValueError('no prior draws')
+    monkeypatch.setattr(optim, '_prior_scaling', fail)
+    result = optim.optimize(_tiny_model, verbose=False, progress=False)
+    assert result['x'] == pytest.approx(0.25, abs=1e-3)

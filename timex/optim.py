@@ -50,7 +50,9 @@ def _prior_scaling(model_fn, init_params, n_draws=100):
         unconstrained = unconstrain_fn(model_fn, (), {}, draw)
         return jax.flatten_util.ravel_pytree(unconstrained)[0]
 
-    flat = np.asarray(jax.vmap(flat_unconstrained)(draws))
+    # lax.map, not vmap: celerite2 has no batching rule, and one draw at a
+    # time keeps memory flat for large datasets
+    flat = np.asarray(jax.lax.map(flat_unconstrained, draws))
     spread = np.std(flat, axis=0)
     narrow = np.isfinite(spread) & (spread > 0) & (spread < NARROW_PRIOR_SCALE)
     center = np.where(narrow, np.median(flat, axis=0), 0.0)

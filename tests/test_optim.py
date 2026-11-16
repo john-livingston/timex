@@ -125,3 +125,33 @@ def test_optimize_runs_unscaled_when_the_prior_cannot_be_drawn(monkeypatch):
     monkeypatch.setattr(optim, '_prior_scaling', fail)
     result = optim.optimize(_tiny_model, verbose=False, progress=False)
     assert result['x'] == pytest.approx(0.25, abs=1e-3)
+
+
+def _gp_model_with_a_narrow_prior():
+    from celerite2.jax import GaussianProcess, terms
+
+    x = np.linspace(0.0, 1.0, 20)
+    numpyro.sample('p', dist.Normal(14.334894, 3e-5))
+    log_amp = numpyro.sample('log_amp', dist.Uniform(-3.0, 1.0))
+    gp = GaussianProcess(terms.Matern32Term(sigma=10**log_amp, rho=0.3))
+    gp.compute(x, diag=np.full(20, 0.01))
+    numpyro.sample('obs', gp.numpyro_dist(), obs=np.zeros(20))
+
+
+def test_prior_scaling_works_on_a_celerite_gp_model():
+    """A narrow prior in a GP model is rescaled like any other.
+
+    celerite2 has no batching rule, so drawing the prior under jax.vmap
+    raised for every GP model. optimize() then fell back to running unscaled,
+    and a GP fit with a free period kept the stall the scaling exists to fix.
+    """
+    import jax
+    from numpyro.infer.util import initialize_model
+
+    model = _gp_model_with_a_narrow_prior
+    z = initialize_model(jax.random.PRNGKey(0), model)[0].z
+    center, scale = optim._prior_scaling(model, z)
+    got = {k: (center[i], scale[i]) for i, k in enumerate(sorted(z))}
+    assert got['p'][0] == pytest.approx(14.334894, abs=1e-4)
+    assert got['p'][1] == pytest.approx(3e-5, rel=0.3)
+    assert got['log_amp'] == (0.0, 1.0)

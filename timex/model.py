@@ -274,6 +274,13 @@ def build(
                     v[p] = get_rv(
                         key=p, priors=priors, shape=nplanets, verbose=False)
 
+        # get_rv squeezes a one-planet parameter to a scalar. The light curves
+        # only carry a planet axis when the orbit parameters do, and the sums
+        # over planets below rely on that axis, so restore it here.
+        for p in list(v):
+            if p in ('dur', 't0', 'period', 'ror', 'b') or p.startswith('ror_'):
+                v[p] = jnp.atleast_1d(v[p])
+
         # Orbit model
         if basis == 'duration':
             if chromatic:

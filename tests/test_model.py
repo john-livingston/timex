@@ -211,3 +211,67 @@ def test_build_gp_honours_per_dataset_log_scale():
     gp_r, _ = model._build_gp(soln, 'r', x, yerr, cfg)
     # r has a much longer scale, so its kernel is not the same object's twin
     assert gp_g.apply_inverse(np.ones(n))[0] != gp_r.apply_inverse(np.ones(n))[0]
+
+
+def _one_planet_likelihood_model(fixed, chromatic=False, n=61):
+    """Mean of the g band likelihood for one planet, at known parameters.
+
+    The orbit parameters are substituted at their sample sites with the shape
+    numpyro gives them, so the transit is centered in the window: 0.2 days
+    long, radius ratio 0.1, and so roughly 10 ppt deep.
+    """
+    import os
+
+    import yaml
+    from numpyro import handlers
+
+    from timex import util
+
+    example = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           'examples', 'hip67522c')
+    with open(os.path.join(example, 'sys.yaml')) as f:
+        sys_params = yaml.safe_load(f)
+    planet = sys_params['planets'][list(sys_params['planets'])[0]]
+    priors = util.get_priors('duration', sys_params['star'], [planet], fixed,
+                             ['g'], 0.0, 0.04)
+    x = np.linspace(-0.3, 0.3, n)
+    # nonzero scatter: the jitter prior's upper bound is log(10 * std(y))
+    y = np.random.default_rng(0).normal(0.0, 0.5, n)
+    datasets = {'g': dict(x=x, y=y, yerr=np.full(n, 0.5), X=None,
+                          texp=0.001, x_hr=x, band='g', ref_time=0.0)}
+    values = {'t0': 0.0, 'dur': 0.2, 'period': 7.0, 'ror': 0.1, 'b': 0.3}
+    for p in fixed:
+        priors[p] = np.array([values[p]])
+    sites = {k: np.array([val]) for k, val in values.items() if k not in fixed}
+    if chromatic:
+        sites['ror_g'] = sites.pop('ror')
+    model_fn, _ = model.build(datasets, priors, 1, masks={'g': None},
+                              fixed=fixed, chromatic=chromatic,
+                              optimize=False, verbose=False)
+    trace = handlers.trace(handlers.seed(
+        handlers.substitute(model_fn, data=sites), 0)).get_trace()
+    loc = np.broadcast_to(np.asarray(trace['g_y_observed']['fn'].loc), (n,))
+    return x, loc
+
+
+@pytest.mark.parametrize('fixed, chromatic', [
+    ([], False), (['b'], False), (['dur'], False), (['t0'], False),
+    (['ror'], False), ([], True),
+], ids=['all_free', 'b_fixed', 'dur_fixed', 't0_fixed', 'ror_fixed', 'chromatic'])
+def test_one_planet_model_with_a_free_period_has_a_transit(fixed, chromatic):
+    """The likelihood mean dips by the transit depth around mid-transit.
+
+    With one planet and a sampled period, every orbit parameter used to reach
+    the orbit as a scalar. The per planet light curves then had no planet
+    axis, so summing over planets summed over time instead, and the model
+    compared against the data was a constant with no transit in it. Holding
+    the duration, radius ratio or impact parameter fixed left that one with a
+    planet axis and the model failed to build at all. A fixed t0 was the one
+    combination that already worked, so that case guards against a regression.
+    """
+    x, loc = _one_planet_likelihood_model(fixed, chromatic)
+    in_transit = np.abs(x) < 0.05
+    out_of_transit = np.abs(x) > 0.2
+    depth = loc[in_transit].mean() - loc[out_of_transit].mean()
+    # ror**2 is 10 ppt. Limb darkening deepens the center of the transit.
+    assert -20.0 < depth < -7.0, f'model has a {depth:.3f} ppt dip, expected about -10'
